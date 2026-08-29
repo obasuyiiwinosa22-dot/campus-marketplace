@@ -357,6 +357,18 @@ function readBody(req) {
     req.on("error", reject);
   });
 }
+/* Serialize a value for a PostgreSQL jsonb column. node-postgres renders
+   top-level JS arrays as PostgreSQL array literals ({...}) instead of JSON,
+   which makes Aiven/Postgres reject the input (SQLSTATE 22P02). Always pass
+   a valid JSON *string* explicitly. Already-string values are passed through
+   (validated) so we never double-encode. */
+function toJson(v) {
+  if (typeof v === "string") {
+    try { JSON.parse(v); return v; } catch { return JSON.stringify([v]); }
+  }
+  if (v === null || v === undefined) return "[]";
+  return JSON.stringify(v);
+}
 function escHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 }
@@ -397,7 +409,7 @@ async function getConversationFull(id) {
 async function saveConversation(conv) {
   await q(
     "UPDATE conversations SET messages=$1, last_message=$2, last_time=$3, last_created_at=$4, unread=$5, product_id=$6 WHERE id=$7",
-    [conv.messages, conv.last_message, conv.last_time, conv.last_created_at, conv.unread, conv.product_id, conv.id]
+    [toJson(conv.messages), conv.last_message, conv.last_time, conv.last_created_at, toJson(conv.unread), conv.product_id, conv.id]
   );
 }
 async function ensureConversation(a, b, productId) {
@@ -423,7 +435,7 @@ async function ensureConversation(a, b, productId) {
     };
     await q(
       "INSERT INTO conversations (id,participant_ids,product_id,messages,last_message,last_time,last_created_at,unread,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
-      [id, conv.participant_ids, conv.product_id, conv.messages, conv.last_message, conv.last_time, conv.last_created_at, conv.unread, conv.created_at]
+      [id, toJson(conv.participant_ids), conv.product_id, toJson(conv.messages), conv.last_message, conv.last_time, conv.last_created_at, toJson(conv.unread), conv.created_at]
     );
     conv = (await q("SELECT * FROM conversations WHERE id=$1", [id])).rows[0];
   }
@@ -706,7 +718,7 @@ async function handleApi(req, res, url) {
         const images = Array.isArray(b.images) ? b.images : [];
         await q(
           "INSERT INTO products (id,seller_id,title,price,description,category,condition,location,status,images,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-          [id, uid_user, b.title, Number(b.price), b.description || "", b.category, b.condition, b.location, b.status || "Available", images, Date.now()]
+          [id, uid_user, b.title, Number(b.price), b.description || "", b.category, b.condition, b.location, b.status || "Available", toJson(images), Date.now()]
         );
         await q("UPDATE users SET listings = listings + 1 WHERE id=$1", [uid_user]);
         const prodRow = (await q("SELECT * FROM products WHERE id=$1", [id])).rows[0];
@@ -761,7 +773,7 @@ async function handleApi(req, res, url) {
       if (existing) { existing.stars = starsN; existing.comment = text; existing.name = u ? u.name : "Anonymous"; existing.createdAt = Date.now(); }
       else reviewsArr.push(reviewObj);
       const newRating = +(reviewsArr.reduce((a, r) => a + r.stars, 0) / reviewsArr.length).toFixed(2);
-      await q("UPDATE products SET reviews=$1, rating=$2, rating_count=$3 WHERE id=$4", [reviewsArr, newRating, reviewsArr.length, pid]);
+        await q("UPDATE products SET reviews=$1, rating=$2, rating_count=$3 WHERE id=$4", [toJson(reviewsArr), newRating, reviewsArr.length, pid]);
       await addNotification({ userId: prodRow.seller_id, type: "rate", text: `<b>${escHtml(u ? u.name : "Someone")}</b> left a ⭐ ${starsN.toFixed(1)} review on <b>${escHtml(prodRow.title)}</b>.`, createdAt: Date.now() });
       const updated = (await q("SELECT * FROM products WHERE id=$1", [pid])).rows[0];
       const sellers = await getSellersMap([updated.seller_id]);
@@ -789,7 +801,7 @@ async function handleApi(req, res, url) {
       const confirmations = Array.isArray(prodRow.confirmations) ? prodRow.confirmations : [];
       if (!confirmations.includes(uid_user)) {
         confirmations.push(uid_user);
-        await q("UPDATE products SET confirmations=$1 WHERE id=$2", [confirmations, pid]);
+        await q("UPDATE products SET confirmations=$1 WHERE id=$2", [toJson(confirmations), pid]);
         const u = await getCleanUserById(uid_user);
         await addNotification({ userId: prodRow.seller_id, type: "sold", text: `<b>${escHtml(u ? u.name : "A buyer")}</b> confirmed they received your <b>${escHtml(prodRow.title)}</b>. ✅`, createdAt: Date.now() });
       }
@@ -826,7 +838,7 @@ async function handleApi(req, res, url) {
       const sets = []; const params = []; let i = 1;
       for (const k of Object.keys(b)) {
         if (k === "price") { sets.push(`price=$${i++}`); params.push(Number(b.price)); }
-        else if (k === "images") { sets.push(`images=$${i++}`); params.push(Array.isArray(b.images) ? b.images : []); }
+        else if (k === "images") { sets.push(`images=$${i++}`); params.push(toJson(b.images)); }
         else if (allowed[k] && b[k] !== undefined) { sets.push(`${k}=$${i++}`); params.push(b[k]); }
       }
       if (sets.length) { params.push(pid); await q(`UPDATE products SET ${sets.join(", ")} WHERE id=$${i}`, params); }
