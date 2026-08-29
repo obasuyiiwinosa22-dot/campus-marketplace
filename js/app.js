@@ -23,7 +23,18 @@
     ready: false,
     verifyPending: false,
     online: 0,
+    onlineUsers: new Set(),
+    presenceTimer: null,
   };
+
+  const isMobile = () => window.matchMedia("(max-width: 900px)").matches;
+  function isUserOnline(u) {
+    if (!u) return false;
+    const id = typeof u === "string" ? u : u.id;
+    if (!id) return false;
+    if (State.onlineUsers.has(id)) return true;
+    return typeof u === "object" && !!u.online;
+  }
 
   /* ---------------- helpers ---------------- */
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
@@ -78,15 +89,19 @@
   modalRoot.addEventListener("click", (e) => { if (e.target === modalRoot) closeModal(); });
 
   /* ---------------- badges ---------------- */
+  function setBadge(el, n) {
+    if (!el) return;
+    if (n) { el.textContent = n > 99 ? "99+" : n; el.hidden = false; } else { el.hidden = true; }
+  }
   function updateBadges() {
-    const fb = $("#favBadge");
-    if (State.favs.size) { fb.textContent = State.favs.size; fb.hidden = false; } else fb.hidden = true;
-    const ub = $("#msgBadge");
     const unread = State.conversations.reduce((a, c) => a + (c.unread || 0), 0);
-    if (unread) { ub.textContent = unread; ub.hidden = false; } else ub.hidden = true;
-    const nb = $("#notifBadge");
     const nu = State.notifications.filter((n) => n.unread).length;
-    if (nu) { nb.textContent = nu; nb.hidden = false; } else nb.hidden = true;
+    setBadge($("#favBadge"), State.favs.size);
+    setBadge($("#favBadgeMobile"), State.favs.size);
+    setBadge($("#msgBadge"), unread);
+    setBadge($("#msgBadgeMobile"), unread);
+    setBadge($("#notifBadge"), nu);
+    setBadge($("#notifBadgeMobile"), nu);
   }
 
   /* ---------------- auth ---------------- */
@@ -107,18 +122,52 @@
     const me = State.me;
     if (!me) { el.hidden = true; el.innerHTML = ""; return; }
     const count = State.online || 0;
+    if (!count) { el.hidden = true; el.innerHTML = ""; return; }
     if (me.isAdmin) {
       el.hidden = false;
       el.className = "nav__online nav__online--admin";
-      el.innerHTML = `🟢 <b>${count}</b> online`;
-    } else if (count >= 30) {
+      el.innerHTML = `<span class="nav__online-dot"></span><b>${count}</b> <span class="nav__online-label">online</span>`;
+    } else {
       el.hidden = false;
       el.className = "nav__online nav__online--pill";
-      el.innerHTML = `<span class="nav__online-dot"></span><b>${count}</b> students online`;
-    } else {
-      el.hidden = true;
-      el.innerHTML = "";
+      el.innerHTML = `<span class="nav__online-dot"></span><b>${count}</b> <span class="nav__online-label">online</span>`;
     }
+    el.title = count === 1 ? "1 student is online right now" : `${count} students are online right now`;
+  }
+
+  /* Presence is pushed over SSE, but we also poll so the counter is correct on
+     first paint and keeps working when EventSource is blocked by a proxy. */
+  function applyPresence(d) {
+    if (!d) return;
+    State.online = d.count || 0;
+    if (Array.isArray(d.users)) State.onlineUsers = new Set(d.users);
+    renderOnlineCounter();
+    refreshPresenceUI();
+  }
+  async function pollPresence() {
+    if (!State.me) return;
+    try { applyPresence(await API.presence()); } catch {}
+  }
+  function startPresencePolling() {
+    if (State.presenceTimer) clearInterval(State.presenceTimer);
+    State.presenceTimer = setInterval(pollPresence, 25000);
+    pollPresence();
+  }
+  /* live-update the online dots / "Online" labels already on screen */
+  function refreshPresenceUI() {
+    $$("[data-presence-for]").forEach((el) => {
+      const id = el.getAttribute("data-presence-for");
+      const on = State.onlineUsers.has(id);
+      if (el.classList.contains("presence-dot")) {
+        el.classList.toggle("is-online", on);
+        el.title = on ? "Online now" : "Offline";
+      } else {
+        el.classList.toggle("is-online", on);
+        el.innerHTML = on
+          ? `<span class="presence-dot is-online"></span> Online`
+          : `<span class="presence-dot"></span> Offline`;
+      }
+    });
   }
 
   function openAuth(after) {
@@ -153,6 +202,9 @@
           updateNavUser();
           await loadUserData();
           updateBadges();
+          connectSSE();            // was missing: no realtime/presence until reload
+          startPresencePolling();
+          refreshAnnouncements();
           toast("Welcome" + (State.me.name ? ", " + State.me.name.split(" ")[0] : ""), mode === "register" ? "Account created 🎉" : "You're logged in");
           if (after) after(); else router();
         } catch (err) { toast("Couldn't " + mode, err.message, "⚠️"); }
@@ -163,13 +215,44 @@
 
   function requireAuth(action) { if (State.me) action(); else openAuth(action); }
 
+  function resetSession() {
+    API.setToken(null);
+    State.me = null;
+    State.favs = new Set();
+    State.conversations = [];
+    State.notifications = [];
+    State.activeConv = null;
+    State.online = 0;
+    State.onlineUsers = new Set();
+    if (State.sse) { try { State.sse.close(); } catch {} State.sse = null; }
+    if (State.presenceTimer) { clearInterval(State.presenceTimer); State.presenceTimer = null; }
+    updateNavUser();
+    updateBadges();
+  }
+
   function logout() {
-    API.setToken(null); State.me = null; State.favs = new Set(); State.conversations = []; State.notifications = [];
-    if (State.sse) { State.sse.close(); State.sse = null; }
-    updateNavUser(); updateBadges(); closeModal();
+    resetSession();
+    closeModal();
     toast("Logged out", "See you soon!");
     router();
   }
+
+  /* Called by the API client / SSE when the server reports the account is banned. */
+  let bannedHandled = false;
+  window.CM.onBanned = function (msg) {
+    if (bannedHandled) return;
+    bannedHandled = true;
+    resetSession();
+    closeAnnouncement();
+    openModal(`
+      <h3>🚫 Account suspended</h3>
+      <p>${esc(msg || "This account has been suspended by a moderator.")}</p>
+      <p class="muted" style="margin-bottom:18px">You have been logged out. If you think this is a mistake, contact a CampusMarket moderator.</p>
+      <div class="modal__actions"><button class="btn btn--primary" id="bannedOk">OK</button></div>`);
+    const ok = $("#bannedOk");
+    if (ok) ok.addEventListener("click", () => { closeModal(); location.hash = "#/"; router(); });
+    setTimeout(() => { bannedHandled = false; }, 4000);
+  };
 
   /* ---------------- data loading ---------------- */
   async function loadUserData() {
@@ -199,9 +282,14 @@
         toast("New notification", d.text.replace(/<[^>]+>/g, ""), "🔔");
       } catch {}
     });
-    es.addEventListener("announcement", () => { try { renderBanner(); } catch {} });
+    es.addEventListener("announcement", () => { try { refreshAnnouncements(); } catch {} });
     es.addEventListener("presence", (e) => {
-      try { const d = JSON.parse(e.data); State.online = d.count || 0; renderOnlineCounter(); } catch {}
+      try { applyPresence(JSON.parse(e.data)); } catch {}
+    });
+    es.addEventListener("banned", (e) => {
+      let msg = "This account has been suspended by a moderator.";
+      try { msg = (JSON.parse(e.data) || {}).reason || msg; } catch {}
+      window.CM.onBanned(msg);
     });
     es.addEventListener("productRemoved", (e) => {
       try {
@@ -213,16 +301,69 @@
     es.onerror = () => {/* auto-reconnect by browser */};
   }
 
-  async function renderBanner() {
-    const el = $("#sysBanner");
-    if (!el) return;
-    try {
-      const { announcements } = await API.announcements();
-      if (announcements && announcements.length) {
-        el.hidden = false;
-        el.innerHTML = announcements.map((a) => `<div class="banner"><span class="banner__icon">📢</span><span>${esc(a.text)}</span></div>`).join("");
-      } else { el.hidden = true; el.innerHTML = ""; }
-    } catch { el.hidden = true; el.innerHTML = ""; }
+  /* ============================================================
+     SYSTEM ANNOUNCEMENTS — small centered popup users can dismiss
+     ============================================================ */
+  const ANN_SEEN_KEY = "cm_ann_dismissed";
+  const annPop = $("#annPop");
+  let annQueue = [];
+
+  function annSeen() {
+    try { return JSON.parse(localStorage.getItem(ANN_SEEN_KEY) || "[]"); } catch { return []; }
+  }
+  function markAnnSeen(id) {
+    if (!id) return;
+    const seen = annSeen().filter((x) => x !== id);
+    seen.push(id);
+    // keep the list small
+    try { localStorage.setItem(ANN_SEEN_KEY, JSON.stringify(seen.slice(-40))); } catch {}
+  }
+  function closeAnnouncement() {
+    if (!annPop) return;
+    annPop.hidden = true;
+    annPop.innerHTML = "";
+    document.body.classList.remove("has-ann");
+  }
+  function showAnnouncement(a) {
+    if (!annPop || !a) return;
+    annPop.hidden = false;
+    annPop.dataset.annId = a.id || "";
+    document.body.classList.add("has-ann");
+    annPop.innerHTML = `
+      <div class="ann-pop__box" role="dialog" aria-modal="true" aria-labelledby="annTitle">
+        <button class="ann-pop__close" id="annClose" aria-label="Close announcement">&times;</button>
+        <div class="ann-pop__icon" aria-hidden="true">📢</div>
+        <h3 class="ann-pop__title" id="annTitle">Announcement</h3>
+        <p class="ann-pop__text">${esc(a.text)}</p>
+        <button class="btn btn--primary btn--block ann-pop__ok" id="annOk">Got it</button>
+      </div>`;
+    const dismiss = () => {
+      markAnnSeen(a.id);
+      closeAnnouncement();
+      const next = annQueue.shift();
+      if (next) showAnnouncement(next);
+    };
+    $("#annClose").addEventListener("click", dismiss);
+    $("#annOk").addEventListener("click", dismiss);
+    annPop.onclick = (e) => { if (e.target === annPop) dismiss(); };
+    annPop.dismiss = dismiss;
+  }
+  async function refreshAnnouncements() {
+    if (!annPop) return;
+    let list = [];
+    try { list = (await API.announcements()).announcements || []; } catch { return; }
+    const alive = new Set(list.map((a) => a.id));
+    // forget dismissals for announcements that no longer exist (keeps storage small)
+    const seen = annSeen().filter((id) => alive.has(id));
+    try { localStorage.setItem(ANN_SEEN_KEY, JSON.stringify(seen)); } catch {}
+
+    // close the popup if the announcement on screen was deleted or hidden by an admin
+    if (!annPop.hidden && annPop.dataset.annId && !alive.has(annPop.dataset.annId)) closeAnnouncement();
+
+    const fresh = list.filter((a) => a.text && !seen.includes(a.id));
+    annQueue = fresh.slice(1);
+    if (!annPop.hidden || !fresh.length) return;
+    showAnnouncement(fresh[0]);
   }
 
   async function onRealtimeMessage({ conversationId, message }) {
@@ -390,7 +531,7 @@
         </div>
         <div class="mkt">
           <aside class="filters" id="filters">
-            <h3>🔎 Filters</h3>
+            <h3>🔎 Filters <button class="filters__close" id="closeFilters" type="button" aria-label="Close filters">&times;</button></h3>
             <div class="filters__group"><label>Category</label><div class="chip-row" id="fCat">
               <button class="chip ${!state.cat ? "is-active" : ""}" data-cat="">All</button>
               ${CATEGORIES.map((c) => `<button class="chip ${state.cat === c.id ? "is-active" : ""}" data-cat="${c.id}">${c.icon} ${esc(c.label)}</button>`).join("")}
@@ -406,7 +547,10 @@
               <button class="chip ${state.sort === "price-asc" ? "is-active" : ""}" data-sort="price-asc">Price ↑</button>
               <button class="chip ${state.sort === "price-desc" ? "is-active" : ""}" data-sort="price-desc">Price ↓</button>
             </div></div>
-            <div class="filters__group" style="border-top:1px solid var(--border)"><button class="btn btn--ghost btn--block btn--sm" id="clearFilters">Clear all</button></div>
+            <div class="filters__group" style="border-top:1px solid var(--border)">
+              <button class="btn btn--ghost btn--block btn--sm" id="clearFilters" type="button">Clear all</button>
+              <button class="btn btn--primary btn--block btn--sm filters__apply" id="applyFilters" type="button">Show results</button>
+            </div>
           </aside>
           <div><p class="mkt__count" id="mktCount"></p><div class="grid grid--3" id="mktGrid"></div></div>
         </div>
@@ -421,11 +565,9 @@
     $("#fMax").addEventListener("input", (e) => { state.max = e.target.value; load(); });
     $("#fLoc").addEventListener("input", (e) => { state.loc = e.target.value; load(); });
     $("#clearFilters").addEventListener("click", () => { location.hash = "#/marketplace"; });
-    $("#openFilters").addEventListener("click", () => $("#filters").classList.add("is-open"));
-    document.addEventListener("click", function closeF(e) {
-      const f = $("#filters");
-      if (f && f.classList.contains("is-open") && !f.contains(e.target) && e.target.id !== "openFilters") f.classList.remove("is-open");
-    });
+    $("#closeFilters").addEventListener("click", () => $("#filters").classList.remove("is-open"));
+    $("#applyFilters").addEventListener("click", () => { $("#filters").classList.remove("is-open"); window.scrollTo({ top: 0, behavior: "smooth" }); });
+    $("#openFilters").addEventListener("click", (e) => { e.stopPropagation(); $("#filters").classList.add("is-open"); });
     await load();
   }
 
@@ -500,8 +642,10 @@
             ${State.me && u && State.me.id !== u.id ? `<button class="btn btn--ghost btn--sm" id="reportBtn" style="margin-top:10px;align-self:flex-start">⚑ Report listing</button>` : ""}
             <div class="pdp__seller">
               <a href="#/user/${u ? u.id : ""}" data-link>${avatarHTML(u)}</a>
-              <div><b><a href="#/user/${u ? u.id : ""}" data-link style="color:inherit">${esc(u ? u.name : "Student")}</a></b>${verifyBadge(u)}<small>${esc(u ? u.role : "")} · ⭐ ${u ? u.rating : "—"}</small></div>
-              <button class="btn btn--soft btn--sm" style="margin-left:auto" id="msgSeller">Message</button>
+              <div><b><a href="#/user/${u ? u.id : ""}" data-link style="color:inherit">${esc(u ? u.name : "Student")}</a></b>${verifyBadge(u)}<small>${esc(u ? u.role : "")} · ⭐ ${u ? u.rating : "—"}</small>
+                ${u ? `<small class="pdp__seller-status ${isUserOnline(u) ? "is-online" : ""}" data-presence-for="${esc(u.id)}">${isUserOnline(u) ? `<span class="presence-dot is-online"></span> Online` : `<span class="presence-dot"></span> Offline`}</small>` : ""}
+              </div>
+              <button class="btn btn--soft btn--sm pdp__msg-btn" id="msgSeller">Message</button>
             </div>
             <div class="pdp__desc"><h3>Description</h3><p>${esc(p.description)}</p></div>
             ${State.me && u && State.me.id !== u.id ? `<div style="margin-top:18px"><b>Rate this seller:</b> <span id="rateStars" style="cursor:pointer">${"★☆☆☆☆".split("").map((s,i)=>`<span data-r="${i+1}" style="font-size:1.4rem;color:var(--gold)">${i<1?"★":"☆"}</span>`).join("")}</span></div>` : ""}
@@ -801,45 +945,72 @@
   async function renderMessages() {
     if (!State.me) { view.innerHTML = `<section class="section wrap">${emptyHTML("💬", "Log in to message", "Chat with sellers and buyers on campus.", null, "")}<div style="text-align:center"><button class="btn btn--primary btn--lg" id="loginBtn">Log in / Sign up</button></div></section>`; $("#loginBtn").addEventListener("click", () => openAuth(() => router())); return; }
     await refreshConversations();
-    if (!State.activeConv && State.conversations.length) State.activeConv = State.conversations[0].id;
+    // on phones start on the conversation list; on desktop preselect the newest chat
+    const openThread = !!State.activeConv;
+    if (!State.activeConv && State.conversations.length && !isMobile()) State.activeConv = State.conversations[0].id;
     view.innerHTML = `
-      <section class="section wrap" style="padding-top:24px">
-        <div class="msg" id="msgApp">
+      <section class="section wrap msg-section">
+        <div class="msg ${openThread ? "" : "show-list"}" id="msgApp">
           <div class="msg__list">
             <div class="msg__search"><input type="text" id="convSearch" placeholder="Search conversations..."></div>
             <div class="msg__items" id="convItems"></div>
           </div>
-          <div class="msg__panel" id="panel"></div>
+          <div class="msg__panel" id="panel">${State.activeConv ? "" : `<div class="msg__placeholder"><div class="msg__placeholder-icon">💬</div><b>Select a conversation</b><p class="muted">Pick a chat on the left, or message a seller from a product page.</p></div>`}</div>
         </div>
       </section>`;
     renderConvList();
     if (State.activeConv) loadThread(State.activeConv);
+    const cs = $("#convSearch");
+    if (cs) cs.addEventListener("input", () => {
+      const term = cs.value.trim().toLowerCase();
+      $$("#convItems .conv").forEach((el) => {
+        el.style.display = !term || el.textContent.toLowerCase().includes(term) ? "" : "none";
+      });
+    });
   }
 
   function renderConvList() {
     const el = $("#convItems"); if (!el) return;
-    if (!State.conversations.length) { el.innerHTML = `<div style="padding:24px;color:var(--muted);text-align:center">No conversations yet.<br>Message a seller from a product page.</div>`; return; }
-    el.innerHTML = State.conversations.map((c) => `
+    if (!State.conversations.length) { el.innerHTML = `<div class="msg__empty">No conversations yet.<br>Message a seller from a product page.</div>`; return; }
+    el.innerHTML = State.conversations.map((c) => {
+      const on = isUserOnline(c.other);
+      return `
       <div class="conv ${c.id === State.activeConv ? "is-active" : ""}" data-id="${c.id}">
-        <div class="conv__av">${avatarHTML(c.other)}${c.other && c.other.online ? '<span class="conv__online"></span>' : ""}</div>
+        <div class="conv__av">${avatarHTML(c.other)}<span class="conv__online presence-dot ${on ? "is-online" : ""}" data-presence-for="${esc(c.other ? c.other.id : "")}" title="${on ? "Online now" : "Offline"}"></span></div>
         <div class="conv__body"><div class="conv__top"><b>${esc(c.other ? c.other.name : "User")}</b>${verifyBadge(c.other)}<time>${esc(c.lastTime || "")}</time></div>
           ${c.product ? `<div class="conv__product">📦 ${esc(c.product.title)}</div>` : ""}
           <div class="conv__preview">${esc(c.preview || "")}</div></div>
         ${c.unread ? `<span class="conv__unread">${c.unread}</span>` : ""}
-      </div>`).join("");
-    $$("#convItems .conv").forEach((c) => c.addEventListener("click", () => { State.activeConv = c.dataset.id; renderConvList(); loadThread(c.dataset.id); }));
+      </div>`;
+    }).join("");
+    $$("#convItems .conv").forEach((c) => c.addEventListener("click", () => {
+      State.activeConv = c.dataset.id;
+      renderConvList();
+      loadThread(c.dataset.id);
+      // on phones the list and the thread share the screen — show the thread
+      const app = $("#msgApp");
+      if (app) app.classList.remove("show-list");
+    }));
   }
 
   async function loadThread(id) {
     const panel = $("#panel"); if (!panel) return;
     const conv = State.conversations.find((c) => c.id === id);
     const other = conv ? conv.other : null;
+    const otherId = other ? other.id : "";
+    const on = isUserOnline(other);
     try { var { messages } = await API.conversation(id); } catch { messages = []; }
     panel.innerHTML = `
       <div class="msg__head">
+        <button class="msg__back" id="msgBack" aria-label="Back to conversations">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>
+        </button>
         ${avatarHTML(other)}
-        <div><b>${esc(other ? other.name : "User")}</b>${verifyBadge(other)}<small>${other && other.online ? "🟢 Online" : "Offline"} · ${esc(other ? other.location : "")}</small></div>
-        <a class="btn btn--soft btn--sm" style="margin-left:auto" href="#/user/${other ? other.id : ""}" data-link>View profile</a>
+        <div class="msg__head-info">
+          <b>${esc(other ? other.name : "User")}</b>${verifyBadge(other)}
+          <small><span class="msg__status ${on ? "is-online" : ""}" data-presence-for="${esc(otherId)}">${on ? `<span class="presence-dot is-online"></span> Online` : `<span class="presence-dot"></span> Offline`}</span>${other && other.location ? `<span class="msg__status-sep">·</span><span class="msg__status-loc">${esc(other.location)}</span>` : ""}</small>
+        </div>
+        <a class="btn btn--soft btn--sm msg__profile-btn" href="#/user/${otherId}" data-link>View profile</a>
       </div>
       ${conv && conv.product ? `<a class="msg__product" href="#/product/${conv.product.id}" data-link>
         ${conv.product.image ? `<img src="${esc(conv.product.image)}" alt="" class="msg__product-img" onerror="this.style.display='none'">` : ""}
@@ -857,6 +1028,8 @@
         <button type="submit" class="send" aria-label="Send"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg></button>
       </form>`;
     const thread = $("#thread"); thread.scrollTop = thread.scrollHeight;
+    const back = $("#msgBack");
+    if (back) back.addEventListener("click", () => { const app = $("#msgApp"); if (app) app.classList.add("show-list"); });
     API.readConversation(id).then(() => { const c = State.conversations.find((x) => x.id === id); if (c) c.unread = 0; updateBadges(); renderConvList(); }).catch(() => {});
     $("#compose").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -864,6 +1037,8 @@
       inp.value = "";
       try { await API.sendMessage(id, v); /* echo via SSE appends */ } catch (err) { toast("Error", err.message, "⚠️"); }
     });
+    // make sure the seller's status is fresh the moment the chat opens
+    pollPresence();
   }
 
   function renderNotFound() { view.innerHTML = `<section class="section wrap">${emptyHTML("🧭", "Page not found", "The page you're looking for doesn't exist.", "#/", "Go Home")}</section>`; }
@@ -875,11 +1050,12 @@
       return;
     }
     view.innerHTML = `
-      <section class="section wrap" style="padding-top:36px">
+      <section class="section wrap admin" style="padding-top:36px">
         <div class="section-head"><div><span class="eyebrow">🛡️ Moderation</span><h2 style="margin-top:12px">Admin Panel</h2><p>Manage reports, listings, users and announcements.</p></div></div>
         <div class="admin-grid">
           <div class="admin-card">
             <h3>📢 System Announcement</h3>
+            <p class="muted admin-hint">Announcements pop up once in the middle of every user's screen. They can close it and it won't nag them again.</p>
             <form id="annForm" class="form-grid">
               <textarea class="field-input" id="annText" rows="2" placeholder="e.g. System maintenance at 10 PM. Meet in public places for item inspection."></textarea>
               <button class="btn btn--primary btn--sm" type="submit">Post announcement</button>
@@ -888,9 +1064,10 @@
           </div>
           <div class="admin-card">
             <h3>🚫 Ban / Suspend Account</h3>
+            <p class="muted admin-hint">A banned account is logged out immediately and can't log in, post, chat or register again with that email.</p>
             <form id="banForm" class="form-grid">
-              <div class="field"><label>Email</label><input class="field-input" id="banEmail" placeholder="user@campus.market"></div>
-              <div class="field"><label>or User ID</label><input class="field-input" id="banUid" placeholder="u107"></div>
+              <div class="field"><label>Email</label><input class="field-input" id="banEmail" type="email" placeholder="user@campus.market" autocomplete="off"></div>
+              <div class="field"><label>or User ID</label><input class="field-input" id="banUid" placeholder="u107" autocomplete="off"></div>
               <button class="btn btn--danger btn--sm" type="submit">Ban account</button>
             </form>
             <div id="banList" class="admin-ban-list"></div>
@@ -908,16 +1085,22 @@
 
     $("#annForm").addEventListener("submit", async (e) => {
       e.preventDefault();
-      const t = $("#annText").value.trim(); if (!t) return;
-      try { await API.adminPostAnnouncement(t); $("#annText").value = ""; toast("Posted", "Announcement is live.", "📢"); adminLoadAnnouncements(); }
+      const t = $("#annText").value.trim();
+      if (!t) return toast("Nothing to post", "Write the announcement first.", "⚠️");
+      try { await API.adminPostAnnouncement(t); $("#annText").value = ""; toast("Posted", "Announcement is live.", "📢"); adminLoadAnnouncements(); refreshAnnouncements(); }
       catch (err) { toast("Error", err.message, "⚠️"); }
     });
     $("#banForm").addEventListener("submit", async (e) => {
       e.preventDefault();
       const email = $("#banEmail").value.trim(); const uidv = $("#banUid").value.trim();
-      if (!email && !uidv) return toast("Add email or ID", "", "⚠️");
-      try { await API.adminBan({ email, userId: uidv }); $("#banEmail").value = ""; $("#banUid").value = ""; toast("Banned", "Account suspended.", "🚫"); adminLoadUsers(); }
-      catch (err) { toast("Error", err.message, "⚠️"); }
+      if (!email && !uidv) return toast("Add email or ID", "Enter the account's email or user ID.", "⚠️");
+      if (!window.confirm(`Ban ${email || uidv}?\n\nThey will be logged out right away and blocked from logging in.`)) return;
+      try {
+        const r = await API.adminBan({ email, userId: uidv });
+        $("#banEmail").value = ""; $("#banUid").value = "";
+        toast("Account banned", (r.user ? r.user.name + " (" + r.user.email + ")" : email || uidv) + " is suspended.", "🚫");
+        adminLoadUsers();
+      } catch (err) { toast("Couldn't ban", err.message, "⚠️"); }
     });
 
     adminLoadReports(); adminLoadUsers(); adminLoadAnnouncements();
@@ -953,36 +1136,73 @@
   }
   async function adminLoadUsers() {
     const el = $("#adminUsers"); if (!el) return;
+    el.innerHTML = `<p class="muted">Loading users…</p>`;
     try {
       const { users, banned } = await API.adminUsers();
-      el.innerHTML = `<table class="admin-table"><thead><tr><th>Name</th><th>Email</th><th>ID</th><th>Listings</th><th>Status</th><th></th></tr></thead><tbody>
-        ${users.map((u) => `<tr>
-          <td>${esc(u.name)}</td><td>${esc(u.email)}</td><td><code>${esc(u.id)}</code></td><td>${u.listings || 0}</td>
-          <td>${u.banned ? '<span class="pill pill--danger">Banned</span>' : '<span class="pill pill--ok">Active</span>'}</td>
-          <td>${u.banned ? `<button class="btn btn--soft btn--sm" data-unban-email="${esc(u.email)}">Unban</button>` : `<button class="btn btn--danger btn--sm" data-ban-uid="${esc(u.id)}">Ban</button>`}</td>
-        </tr>`).join("")}
-      </tbody></table>
-      ${banned.length ? `<div class="admin-banned"><b>Banned list:</b> ${banned.map((b) => `<code>${esc(b.email || b.userId)}</code>`).join(", ")}</div>` : ""}`;
-      $$("#adminUsers [data-ban-uid]").forEach((b) => b.addEventListener("click", async () => { try { await API.adminBan({ userId: b.dataset.banUid }); toast("Banned", "Account suspended.", "🚫"); adminLoadUsers(); } catch (e) { toast("Error", e.message, "⚠️"); } }));
-      $$("#adminUsers [data-unban-email]").forEach((b) => b.addEventListener("click", async () => { try { await API.adminUnban({ email: b.dataset.unbanEmail }); toast("Unbanned", "Account restored.", "✅"); adminLoadUsers(); } catch (e) { toast("Error", e.message, "⚠️"); } }));
-    } catch (e) { el.innerHTML = `<p class="muted">Failed to load users.</p>`; }
+      const rows = users.map((u) => `<tr class="${u.banned ? "is-banned" : ""}">
+          <td data-label="Name"><span class="admin-user"><span class="presence-dot ${isUserOnline(u) ? "is-online" : ""}" data-presence-for="${esc(u.id)}" title="${isUserOnline(u) ? "Online now" : "Offline"}"></span>${esc(u.name)}${u.isAdmin ? ' <span class="pill pill--ok">Admin</span>' : ""}</span></td>
+          <td data-label="Email"><span class="admin-email">${esc(u.email)}</span></td>
+          <td data-label="ID"><code>${esc(u.id)}</code></td>
+          <td data-label="Listings">${u.listings || 0}</td>
+          <td data-label="Status">${u.banned ? '<span class="pill pill--danger">Banned</span>' : '<span class="pill pill--ok">Active</span>'}</td>
+          <td data-label="Action">${u.isAdmin && !u.banned
+            ? `<span class="muted">—</span>`
+            : u.banned
+              ? `<button class="btn btn--soft btn--sm" data-unban-id="${esc(u.id)}" data-unban-email="${esc(u.email)}" data-name="${esc(u.name)}">Unban</button>`
+              : `<button class="btn btn--danger btn--sm" data-ban-id="${esc(u.id)}" data-ban-email="${esc(u.email)}" data-name="${esc(u.name)}">Ban</button>`}</td>
+        </tr>`).join("");
+      el.innerHTML = `<div class="table-scroll"><table class="admin-table"><thead><tr><th>Name</th><th>Email</th><th>ID</th><th>Listings</th><th>Status</th><th></th></tr></thead><tbody>
+        ${rows}
+      </tbody></table></div>
+      ${banned.length ? `<div class="admin-banned"><b>Banned list:</b> ${banned.map((b) => `<code>${esc(b.email || b.userId)}</code>`).join(" ")}</div>` : `<div class="admin-banned">No banned accounts.</div>`}`;
+
+      $$("#adminUsers [data-ban-id]").forEach((b) => b.addEventListener("click", async () => {
+        const name = b.dataset.name || b.dataset.banEmail;
+        if (!window.confirm(`Ban ${name}?\n\nThey will be logged out immediately and blocked from logging back in.`)) return;
+        b.disabled = true;
+        try {
+          await API.adminBan({ userId: b.dataset.banId, email: b.dataset.banEmail });
+          toast("Account banned", name + " is suspended.", "🚫");
+          adminLoadUsers();
+        } catch (e) { b.disabled = false; toast("Couldn't ban", e.message, "⚠️"); }
+      }));
+      $$("#adminUsers [data-unban-id]").forEach((b) => b.addEventListener("click", async () => {
+        const name = b.dataset.name || b.dataset.unbanEmail;
+        b.disabled = true;
+        try {
+          // send BOTH id and email so bans placed either way are fully cleared
+          await API.adminUnban({ userId: b.dataset.unbanId, email: b.dataset.unbanEmail });
+          toast("Account restored", name + " can log in again.", "✅");
+          adminLoadUsers();
+        } catch (e) { b.disabled = false; toast("Couldn't unban", e.message, "⚠️"); }
+      }));
+    } catch (e) { el.innerHTML = `<p class="muted">Failed to load users: ${esc(e.message)}</p>`; }
   }
   async function adminLoadAnnouncements() {
     const el = $("#annList"); if (!el) return;
     try {
       const { announcements } = await API.adminAnnouncements();
-      if (!announcements.length) { el.innerHTML = `<p class="muted">No announcements.</p>`; return; }
-      el.innerHTML = announcements.slice().reverse().map((a) => `
+      if (!announcements.length) { el.innerHTML = `<p class="muted">No announcements yet.</p>`; return; }
+      el.innerHTML = announcements.map((a) => `
         <div class="admin-ann ${a.active ? "" : "is-off"}">
-          <span>${esc(a.text)}</span>
-          <div>
+          <span class="admin-ann__text">${esc(a.text)}${a.active ? "" : ` <span class="pill pill--warn">Hidden</span>`}</span>
+          <div class="admin-ann__actions">
             <button class="btn btn--soft btn--sm" data-toggle="${a.id}">${a.active ? "Hide" : "Show"}</button>
-            <button class="btn btn--ghost btn--sm" data-del-ann="${a.id}">Delete</button>
+            <button class="btn btn--danger btn--sm" data-del-ann="${a.id}">Delete</button>
           </div>
         </div>`).join("");
-      $$("#annList [data-toggle]").forEach((b) => b.addEventListener("click", async () => { try { await API.adminToggleAnnouncement(b.dataset.toggle); adminLoadAnnouncements(); } catch (e) { toast("Error", e.message, "⚠️"); } }));
-      $$("#annList [data-del-ann]").forEach((b) => b.addEventListener("click", async () => { try { await API.adminDeleteAnnouncement(b.dataset.delAnn); adminLoadAnnouncements(); } catch (e) { toast("Error", e.message, "⚠️"); } }));
-    } catch (e) { el.innerHTML = `<p class="muted">Failed to load.</p>`; }
+      $$("#annList [data-toggle]").forEach((b) => b.addEventListener("click", async () => {
+        b.disabled = true;
+        try { await API.adminToggleAnnouncement(b.dataset.toggle); toast("Updated", "Announcement visibility changed.", "✓"); adminLoadAnnouncements(); refreshAnnouncements(); }
+        catch (e) { b.disabled = false; toast("Error", e.message, "⚠️"); }
+      }));
+      $$("#annList [data-del-ann]").forEach((b) => b.addEventListener("click", async () => {
+        if (!window.confirm("Delete this announcement? It will disappear for everyone.")) return;
+        b.disabled = true;
+        try { await API.adminDeleteAnnouncement(b.dataset.delAnn); toast("Deleted", "Announcement removed.", "🗑"); adminLoadAnnouncements(); refreshAnnouncements(); }
+        catch (e) { b.disabled = false; toast("Couldn't delete", e.message, "⚠️"); }
+      }));
+    } catch (e) { el.innerHTML = `<p class="muted">Failed to load: ${esc(e.message)}</p>`; }
   }
 
   /* ============================================================
@@ -1036,13 +1256,50 @@
   window.addEventListener("scroll", onScroll, { passive: true }); onScroll();
 
   const burger = $("#navBurger"), navMobile = $("#navMobile");
-  burger.addEventListener("click", () => { const open = navMobile.hidden; navMobile.hidden = !open; burger.classList.toggle("is-open", open); });
-  function closeMobileNav() { navMobile.hidden = true; burger.classList.remove("is-open"); }
+  /* The stylesheet shows the menu via `.nav__mobile.is-open`, so toggling only the
+     `hidden` attribute (as before) never actually opened it on phones. */
+  function openMobileNav() {
+    navMobile.hidden = false;
+    navMobile.classList.add("is-open");
+    burger.classList.add("is-open");
+    burger.setAttribute("aria-expanded", "true");
+  }
+  function closeMobileNav() {
+    navMobile.hidden = true;
+    navMobile.classList.remove("is-open");
+    burger.classList.remove("is-open");
+    burger.setAttribute("aria-expanded", "false");
+  }
+  burger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (navMobile.classList.contains("is-open")) closeMobileNav(); else openMobileNav();
+  });
+  document.addEventListener("click", (e) => {
+    if (!navMobile.classList.contains("is-open")) return;
+    if (navMobile.contains(e.target) || burger.contains(e.target)) return;
+    closeMobileNav();
+  });
+  window.addEventListener("resize", () => { if (!isMobile()) closeMobileNav(); });
+
+  /* close the mobile filter sheet when tapping outside it (registered once) */
+  document.addEventListener("click", (e) => {
+    const f = $("#filters");
+    if (!f || !f.classList.contains("is-open")) return;
+    if (f.contains(e.target) || (e.target.closest && e.target.closest("#openFilters"))) return;
+    f.classList.remove("is-open");
+  });
 
   $("#navSearchBtn").addEventListener("click", () => { searchOverlay.hidden = false; $("#globalSearch").focus(); $("#globalSearch").value = ""; $("#searchResults").innerHTML = ""; });
   $("#searchClose").addEventListener("click", () => (searchOverlay.hidden = true));
   searchOverlay.addEventListener("click", (e) => { if (e.target === searchOverlay) searchOverlay.hidden = true; });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { searchOverlay.hidden = true; closeModal(); } });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    searchOverlay.hidden = true;
+    closeModal();
+    closeMobileNav();
+    const f = $("#filters"); if (f) f.classList.remove("is-open");
+    if (annPop && !annPop.hidden && typeof annPop.dismiss === "function") annPop.dismiss();
+  });
   $("#globalSearch").addEventListener("input", async () => {
     const q = $("#globalSearch").value.trim().toLowerCase();
     const res = $("#searchResults");
@@ -1089,9 +1346,12 @@
     await loadUserData();
     updateBadges();
     connectSSE();
+    startPresencePolling();
     renderOnlineCounter();
-    renderBanner();
+    refreshAnnouncements();
     window.addEventListener("hashchange", router);
+    // re-check presence when the tab comes back to the foreground
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) pollPresence(); });
     await router();
   }
   init();
