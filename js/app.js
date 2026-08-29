@@ -22,6 +22,7 @@
     sse: null,
     ready: false,
     verifyPending: false,
+    online: 0,
   };
 
   /* ---------------- helpers ---------------- */
@@ -96,6 +97,28 @@
     else a.innerHTML = `<img src="https://i.pravatar.cc/80?img=12" alt="You" onerror="this.style.background='#5b5bd6';this.removeAttribute('src')">`;
     const admin = !!(State.me && State.me.isAdmin);
     [$("#navAdmin"), $("#navAdminMobile")].forEach((el) => { if (el) el.style.display = admin ? "" : "none"; });
+    renderOnlineCounter();
+  }
+
+  /* online-user presence counter (lives in the navbar) */
+  function renderOnlineCounter() {
+    const el = $("#onlineCounter");
+    if (!el) return;
+    const me = State.me;
+    if (!me) { el.hidden = true; el.innerHTML = ""; return; }
+    const count = State.online || 0;
+    if (me.isAdmin) {
+      el.hidden = false;
+      el.className = "nav__online nav__online--admin";
+      el.innerHTML = `🟢 <b>${count}</b> online`;
+    } else if (count >= 30) {
+      el.hidden = false;
+      el.className = "nav__online nav__online--pill";
+      el.innerHTML = `<span class="nav__online-dot"></span><b>${count}</b> students online`;
+    } else {
+      el.hidden = true;
+      el.innerHTML = "";
+    }
   }
 
   function openAuth(after) {
@@ -177,6 +200,9 @@
       } catch {}
     });
     es.addEventListener("announcement", () => { try { renderBanner(); } catch {} });
+    es.addEventListener("presence", (e) => {
+      try { const d = JSON.parse(e.data); State.online = d.count || 0; renderOnlineCounter(); } catch {}
+    });
     es.addEventListener("productRemoved", (e) => {
       try {
         const d = JSON.parse(e.data);
@@ -1063,6 +1089,7 @@
     await loadUserData();
     updateBadges();
     connectSSE();
+    renderOnlineCounter();
     renderBanner();
     window.addEventListener("hashchange", router);
     await router();
