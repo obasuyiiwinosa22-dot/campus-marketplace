@@ -25,7 +25,13 @@ const API = {
     });
     let data = {};
     try { data = await res.json(); } catch {}
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    if (!res.ok) {
+      // the server flags a suspended account — let the app force a logout
+      if (res.status === 403 && data && data.banned && window.CM && typeof window.CM.onBanned === "function") {
+        window.CM.onBanned(data.error || "This account has been suspended.");
+      }
+      throw new Error(data.error || `Request failed (${res.status})`);
+    }
     return data;
   },
   get(p) { return this.req("GET", p); },
@@ -53,10 +59,14 @@ const API = {
   confirmSale(id) { return this.post("/api/products/" + id + "/confirm", {}); },
   reportProduct(id, reason, text) { return this.post("/api/products/" + id + "/report", { reason, text }); },
   announcements() { return this.get("/api/announcements"); },
+  presence() { return this.get("/api/presence"); },
 
   /* verification */
   verifySend(email) { return this.post("/api/verify/send", { email }); },
   verifyCheck(code) { return this.post("/api/verify/check", { code }); },
+
+  /* admin */
+  adminReports() { return this.get("/api/admin/reports"); },
   adminResolveReport(id) { return this.post("/api/admin/reports/resolve", { id }); },
   adminRemoveProduct(pid) { return this.post("/api/admin/products/remove", { productId: pid }); },
   adminUsers() { return this.get("/api/admin/users"); },
