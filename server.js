@@ -292,10 +292,14 @@ function uid(prefix) { return prefix + crypto.randomBytes(6).toString("hex"); }
 
 /* ---------------- SSE ---------------- */
 const clients = new Map(); // userId -> Set<res>
+function broadcastPresence() {
+  sseBroadcast("presence", { count: clients.size });
+}
 function sseRegister(userId, res) {
   if (!clients.has(userId)) clients.set(userId, new Set());
   clients.get(userId).add(res);
   res.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`);
+  broadcastPresence();
 }
 function sseEmit(userId, event, data) {
   const set = clients.get(userId);
@@ -310,6 +314,7 @@ function sseBroadcast(event, data) {
 function sseRemove(userId, res) {
   const set = clients.get(userId);
   if (set) { set.delete(res); if (!set.size) clients.delete(userId); }
+  broadcastPresence();
 }
 
 /* ---------------- login rate limiting ---------------- */
@@ -396,7 +401,7 @@ async function addNotification({ userId, type, text, time = "just now", createdA
   sseEmit(userId, "notification", note);
   return note;
 }
-async function productWithSeller(prod, sellersMap) {
+function productWithSeller(prod, sellersMap) {
   if (!prod) return null;
   return { ...prod, seller: (sellersMap && sellersMap[prod.sellerId]) || null };
 }
@@ -1073,7 +1078,7 @@ const server = http.createServer(async (req, res) => {
     return serveStatic(req, res, url);
   } catch (err) {
     console.error("[API ERROR]", err && err.message, "\n", err && err.stack);
-    if (!res.headersSent) send(res, 500, { error: "Server error.", detail: err && err.message });
+    if (!res.headersSent) send(res, 500, { error: "Server error: " + (err && err.message ? err.message : "unknown") });
   }
 });
 
