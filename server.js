@@ -179,8 +179,7 @@ async function seedModerator() {
 
 /* ---------------- row mappers ---------------- */
 const USER_COLS = "id,name,email,role,location,bio,avatar,is_admin,rating,ratings_count,listings,sold,reviews,created_at,email_verified";
-// Emails in this list are always treated as admin, no matter what is_admin says in the DB.
-const HARDCODED_ADMIN_EMAILS = ["lunacoder22@gmail.com"];
+
 function cleanUser(row) {
   if (!row) return null;
   return {
@@ -191,7 +190,7 @@ function cleanUser(row) {
     location: row.location || "Main Campus",
     bio: row.bio || "",
     avatar: row.avatar || "",
-    isAdmin: !!row.is_admin || HARDCODED_ADMIN_EMAILS.includes(String(row.email || "").trim().toLowerCase()),
+    isAdmin: !!row.is_admin,
     rating: row.rating != null ? Number(row.rating) : 0,
     ratingsCount: row.ratings_count || 0,
     listings: row.listings || 0,
@@ -263,7 +262,10 @@ async function getSellersMap(ids) {
 async function isBannedUser(u) {
   if (!u) return false;
   const email = (u.email || "").toLowerCase();
-  const r = await q("SELECT 1 FROM banned WHERE (email=$1) OR (user_id=$2) LIMIT 1", [email || null, u.id || null]);
+  const r = await q(
+    "SELECT 1 FROM banned WHERE (email IS NOT NULL AND lower(email)=$1) OR (user_id IS NOT NULL AND user_id=$2) LIMIT 1",
+    [email || null, u.id || null]
+  );
   return r.rows.length > 0;
 }
 
@@ -291,16 +293,54 @@ function getUserId(req, url) {
 }
 function uid(prefix) { return prefix + crypto.randomBytes(6).toString("hex"); }
 
-/* ---------------- SSE ---------------- */
-const clients = new Map(); // userId -> Set<res>
-function broadcastPresence() {
-  sseBroadcast("presence", { count: clients.size });
+/* ---------------- SSE + presence ---------------- */
+const clients = new Map();  // userId -> Set<res>   (live SSE connections)
+const lastSeen = new Map(); // userId -> ts of last authenticated request
+const ONLINE_WINDOW = 75 * 1000; // a user counts as online this long after activity
+
+function isUserOnline(userId) {
+  if (!userId) return false;
+  if (clients.has(userId)) return true;
+  const t = lastSeen.get(userId);
+  return !!t && Date.now() - t < ONLINE_WINDOW;
+}
+function onlineUserIds() {
+  const now = Date.now();
+  const ids = new Set(clients.keys());
+  lastSeen.forEach((t, id) => {
+    if (now - t < ONLINE_WINDOW) ids.add(id);
+    else if (now - t > ONLINE_WINDOW * 6) lastSeen.delete(id);
+  });
+  return [...ids];
+}
+function presencePayload() {
+  const users = onlineUserIds();
+  return { count: users.length, users };
+}
+let lastPresenceKey = "";
+function broadcastPresence(force) {
+  const payload = presencePayload();
+  const key = payload.users.slice().sort().join(",");
+  if (!force && key === lastPresenceKey) return;
+  lastPresenceKey = key;
+  sseBroadcast("presence", payload);
+}
+/* Any authenticated API call refreshes presence. This keeps the counter and the
+   chat online dots accurate even when EventSource is blocked by a proxy. */
+function touchPresence(userId) {
+  if (!userId) return;
+  const wasOnline = isUserOnline(userId);
+  lastSeen.set(userId, Date.now());
+  if (!wasOnline) broadcastPresence();
 }
 function sseRegister(userId, res) {
   if (!clients.has(userId)) clients.set(userId, new Set());
   clients.get(userId).add(res);
+  lastSeen.set(userId, Date.now());
   res.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`);
-  broadcastPresence();
+  // give the new client the current presence immediately (don't wait for a change)
+  res.write(`event: presence\ndata: ${JSON.stringify(presencePayload())}\n\n`);
+  broadcastPresence(true);
 }
 function sseEmit(userId, event, data) {
   const set = clients.get(userId);
@@ -312,11 +352,25 @@ function sseBroadcast(event, data) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   clients.forEach((set) => set.forEach((res) => { try { res.write(payload); } catch {} }));
 }
+/* Send a final event to a user and drop their streams (used when banning). */
+function sseKick(userId, event, data) {
+  const set = clients.get(userId);
+  if (set) {
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+    set.forEach((res) => { try { res.write(payload); res.end(); } catch {} });
+    clients.delete(userId);
+  }
+  lastSeen.delete(userId);
+  broadcastPresence(true);
+}
 function sseRemove(userId, res) {
   const set = clients.get(userId);
   if (set) { set.delete(res); if (!set.size) clients.delete(userId); }
-  broadcastPresence();
+  broadcastPresence(true);
 }
+/* Re-publish presence periodically so counts decay as users go idle. */
+setInterval(() => broadcastPresence(), 20000).unref?.();
+
 
 /* ---------------- login rate limiting ---------------- */
 const loginAttempts = new Map();
@@ -404,7 +458,8 @@ async function addNotification({ userId, type, text, time = "just now", createdA
 }
 function productWithSeller(prod, sellersMap) {
   if (!prod) return null;
-  return { ...prod, seller: (sellersMap && sellersMap[prod.sellerId]) || null };
+  const seller = (sellersMap && sellersMap[prod.sellerId]) || null;
+  return { ...prod, seller: seller ? { ...seller, online: isUserOnline(seller.id) } : null };
 }
 
 /* ---------------- conversations ---------------- */
@@ -467,6 +522,7 @@ async function appendMessage(conv, senderId, text, image) {
 async function decorateConversation(conv, me) {
   const otherId = (conv.participant_ids || []).find((p) => p !== me);
   const other = await getCleanUserById(otherId);
+  if (other) other.online = isUserOnline(other.id);
   let product = null;
   if (conv.product_id) {
     const pr = await q("SELECT id,title,images FROM products WHERE id=$1", [conv.product_id]);
@@ -493,13 +549,17 @@ async function handleApi(req, res, url) {
   const method = req.method;
   const uid_user = getUserId(req, url);
 
-  // block suspended accounts from mutating
-  if (uid_user) {
+  // block suspended accounts — the whole API, not just writes
+  // (/api/auth/* is excluded so a banned user can still sign into another account;
+  //  the login handler does its own ban check.)
+  if (uid_user && seg[0] !== "auth") {
     const au = await getUserFullById(uid_user);
-    if (au && (await isBannedUser(au)) && method !== "GET" && seg[0] !== "auth" && seg[0] !== "me") {
-      return send(res, 403, { error: "This account has been suspended." });
+    if (au && (await isBannedUser(au))) {
+      return send(res, 403, { error: "This account has been suspended by a moderator.", banned: true });
     }
   }
+  // any authenticated request keeps the user marked as online
+  touchPresence(uid_user);
 
   // /api/auth/...
   if (seg[0] === "auth") {
@@ -509,7 +569,7 @@ async function handleApi(req, res, url) {
       const email = String(b.email).trim().toLowerCase();
       const existing = await q("SELECT id FROM users WHERE email=$1", [email]);
       if (existing.rows.length) return send(res, 409, { error: "An account with that email already exists." });
-      const bannedCheck = await q("SELECT 1 FROM banned WHERE email=$1 LIMIT 1", [email]);
+      const bannedCheck = await q("SELECT 1 FROM banned WHERE lower(email)=$1 LIMIT 1", [email]);
       if (bannedCheck.rows.length) return send(res, 403, { error: "This email is not allowed to register." });
       const salt = crypto.randomBytes(16).toString("hex");
       const hash = crypto.scryptSync(b.password, salt, 64).toString("hex");
@@ -531,9 +591,14 @@ async function handleApi(req, res, url) {
       if (!user) { registerFailedLogin(rl.key); return send(res, 401, { error: "Invalid email or password." }); }
       const hash = crypto.scryptSync(b.password, user.salt, 64).toString("hex");
       if (hash !== user.hash) { registerFailedLogin(rl.key); return send(res, 401, { error: "Invalid email or password." }); }
-      if (await isBannedUser(user)) return send(res, 403, { error: "This account has been suspended." });
+      if (await isBannedUser(user)) return send(res, 403, { error: "This account has been suspended by a moderator.", banned: true });
       clearLoginAttempts(rl.key);
-      return send(res, 200, { token: makeToken(user.id), user: cleanUser(user) });
+      /* NOTE: `user` here is already a mapped object (fullUser), so running it
+         through cleanUser() again dropped isAdmin / emailVerified / ratingsCount
+         (snake_case keys no longer exist) — that's why the Admin link and the
+         verified badge only appeared after a page reload. Re-read it cleanly. */
+      const clean = await getCleanUserById(user.id);
+      return send(res, 200, { token: makeToken(user.id), user: clean });
     }
     if (seg[1] === "me" && method === "GET") {
       if (!uid_user) return send(res, 401, { error: "Not authenticated." });
@@ -614,6 +679,12 @@ async function handleApi(req, res, url) {
     return send(res, 200, { user });
   }
 
+  // /api/presence — live online users (count for everyone, ids for logged-in users)
+  if (seg[0] === "presence" && method === "GET") {
+    const p = presencePayload();
+    return send(res, 200, uid_user ? p : { count: p.count, users: [] });
+  }
+
   // /api/users/...
   if (seg[0] === "users" && seg[1]) {
     const userId = seg[1];
@@ -639,6 +710,7 @@ async function handleApi(req, res, url) {
     }
     if (!seg[2] && method === "GET") {
       const user = await getCleanUserById(userId);
+      if (user) user.online = isUserOnline(user.id);
       return send(res, user ? 200 : 404, user ? { user } : { error: "Not found." });
     }
     if (!seg[2] && method === "PUT") {
@@ -972,62 +1044,119 @@ async function handleApi(req, res, url) {
     }
     if (seg[1] === "users" && method === "GET") {
       const ur = await q(`SELECT ${USER_COLS} FROM users`);
-      const users = ur.rows.map(cleanUser).map(async (u) => ({ ...u, banned: await isBannedUser(u) }));
-      const resolved = await Promise.all(users);
       const br = await q("SELECT email, user_id FROM banned");
+      const bannedEmails = new Set(br.rows.map((r) => (r.email || "").toLowerCase()).filter(Boolean));
+      const bannedIds = new Set(br.rows.map((r) => r.user_id).filter(Boolean));
+      const resolved = ur.rows.map(cleanUser).map((u) => ({
+        ...u,
+        online: isUserOnline(u.id),
+        banned: bannedIds.has(u.id) || bannedEmails.has((u.email || "").toLowerCase()),
+      }));
+      resolved.sort((a, b) => (b.banned ? 1 : 0) - (a.banned ? 1 : 0) || a.name.localeCompare(b.name));
       const banned = br.rows.map((row) => ({ email: row.email, userId: row.user_id }));
       return send(res, 200, { users: resolved, banned });
     }
     if (seg[1] === "ban" && method === "POST") {
       const b = await readBody(req);
-      const email = b.email ? String(b.email).trim().toLowerCase() : null;
-      const userId = b.userId ? String(b.userId).trim() : null;
+      let email = b.email ? String(b.email).trim().toLowerCase() : null;
+      let userId = b.userId ? String(b.userId).trim() : null;
       if (!email && !userId) return send(res, 400, { error: "Provide an email or user ID." });
+
+      /* Resolve the account so a ban always stores BOTH the id and the email.
+         Previously a ban placed by user-id could not be undone with an email
+         (and vice-versa), which is why unban appeared to do nothing. */
+      let target = null;
+      if (userId) target = await getUserFullById(userId);
+      if (!target && email) target = await getUserFullByEmail(email);
+      if (target) {
+        if (target.id === admin.id) return send(res, 400, { error: "You can't ban your own account." });
+        if (target.isAdmin) return send(res, 400, { error: "You can't ban an administrator account." });
+        email = (target.email || "").toLowerCase() || null;
+        userId = target.id;
+      } else if (userId && !email) {
+        return send(res, 404, { error: "No account found with that user ID." });
+      }
+
+      // replace any partial ban rows with a single complete one
+      if (email) await q("DELETE FROM banned WHERE lower(email)=$1", [email]);
+      if (userId) await q("DELETE FROM banned WHERE user_id=$1", [userId]);
       await q("INSERT INTO banned (email,user_id,created_at) VALUES ($1,$2,$3)", [email, userId, Date.now()]);
+
+      if (target) {
+        // kill the session immediately: drop their live stream and force a logout
+        sseKick(target.id, "banned", { reason: "Your account has been suspended by a moderator." });
+      }
       const br = await q("SELECT email, user_id FROM banned");
-      return send(res, 200, { ok: true, banned: br.rows.map((row) => ({ email: row.email, userId: row.user_id })) });
+      return send(res, 200, {
+        ok: true,
+        user: target ? { id: target.id, name: target.name, email: target.email } : null,
+        banned: br.rows.map((row) => ({ email: row.email, userId: row.user_id })),
+      });
     }
     if (seg[1] === "unban" && method === "POST") {
       const b = await readBody(req);
-      const email = b.email ? String(b.email).trim().toLowerCase() : null;
-      const userId = b.userId ? String(b.userId).trim() : null;
-      if (email) await q("DELETE FROM banned WHERE email=$1", [email]);
-      if (userId) await q("DELETE FROM banned WHERE user_id=$1", [userId]);
+      let email = b.email ? String(b.email).trim().toLowerCase() : null;
+      let userId = b.userId ? String(b.userId).trim() : null;
+      if (!email && !userId) return send(res, 400, { error: "Provide an email or user ID." });
+
+      // resolve so we clear every row belonging to that account
+      let target = null;
+      if (userId) target = await getUserFullById(userId);
+      if (!target && email) target = await getUserFullByEmail(email);
+      if (target) { email = (target.email || "").toLowerCase() || email; userId = target.id; }
+
+      let removed = 0;
+      if (email) removed += (await q("DELETE FROM banned WHERE lower(email)=$1 RETURNING id", [email])).rows.length;
+      if (userId) removed += (await q("DELETE FROM banned WHERE user_id=$1 RETURNING id", [userId])).rows.length;
+      if (!removed) return send(res, 404, { error: "That account is not on the banned list." });
+
       const br = await q("SELECT email, user_id FROM banned");
-      return send(res, 200, { ok: true, banned: br.rows.map((row) => ({ email: row.email, userId: row.user_id })) });
+      return send(res, 200, {
+        ok: true,
+        removed,
+        user: target ? { id: target.id, name: target.name, email: target.email } : null,
+        banned: br.rows.map((row) => ({ email: row.email, userId: row.user_id })),
+      });
     }
     if (seg[1] === "announcements" && method === "GET") {
       const r = await q("SELECT * FROM announcements ORDER BY created_at DESC");
       const list = r.rows.map((row) => ({ id: row.id, text: row.text, active: row.active, createdAt: parseInt(row.created_at) || 0 }));
       return send(res, 200, { announcements: list });
     }
-    if (seg[1] === "announcements" && method === "POST") {
-      const b = await readBody(req);
-      const text = (b.text || "").toString().trim();
-      if (!text) return send(res, 400, { error: "Announcement text is required." });
-      const id = uid("ann");
-      await q("INSERT INTO announcements (id,text,active,created_at,by) VALUES ($1,$2,true,$3,$4)", [id, text, Date.now(), admin.id]);
-      const ann = { id, text, active: true, createdAt: Date.now(), by: admin.id };
-      sseBroadcast("announcement", ann);
-      return send(res, 201, { announcement: ann });
-    }
+    /* NOTE: the toggle/delete sub-routes must be matched *before* the plain
+       "create announcement" POST route, otherwise POST /announcements/toggle
+       and /announcements/delete fall into the create branch and fail with
+       "Announcement text is required." (that was the delete bug). */
     if (seg[1] === "announcements" && seg[2] === "toggle" && method === "POST") {
       const b = await readBody(req);
       const r = await q("SELECT * FROM announcements WHERE id=$1", [b.id]);
       const ann = r.rows[0];
-      if (ann) {
-        const active = !ann.active;
-        await q("UPDATE announcements SET active=$1 WHERE id=$2", [active, b.id]);
-        const out = { id: ann.id, text: ann.text, active, createdAt: parseInt(ann.created_at) || 0 };
-        sseBroadcast("announcement", out);
-      }
-      return send(res, 200, { ok: true });
+      if (!ann) return send(res, 404, { error: "Announcement not found." });
+      const active = !ann.active;
+      await q("UPDATE announcements SET active=$1 WHERE id=$2", [active, b.id]);
+      const out = { id: ann.id, text: ann.text, active, createdAt: parseInt(ann.created_at) || 0 };
+      sseBroadcast("announcement", out);
+      return send(res, 200, { ok: true, announcement: out });
     }
-    if (seg[1] === "announcements" && seg[2] === "delete" && method === "POST") {
+    if (seg[1] === "announcements" && (seg[2] === "delete" || method === "DELETE")) {
+      const b = method === "DELETE" ? {} : await readBody(req);
+      const annId = b.id || seg[3] || (method === "DELETE" ? seg[2] : null);
+      if (!annId) return send(res, 400, { error: "Announcement id is required." });
+      const r = await q("DELETE FROM announcements WHERE id=$1 RETURNING id", [annId]);
+      if (!r.rows.length) return send(res, 404, { error: "Announcement not found." });
+      sseBroadcast("announcement", { id: annId, deleted: true });
+      return send(res, 200, { ok: true, id: annId });
+    }
+    if (seg[1] === "announcements" && !seg[2] && method === "POST") {
       const b = await readBody(req);
-      await q("DELETE FROM announcements WHERE id=$1", [b.id]);
-      sseBroadcast("announcement", { id: b.id, deleted: true });
-      return send(res, 200, { ok: true });
+      const text = (b.text || "").toString().trim();
+      if (!text) return send(res, 400, { error: "Announcement text is required." });
+      const id = uid("ann");
+      const createdAt = Date.now();
+      await q("INSERT INTO announcements (id,text,active,created_at,by) VALUES ($1,$2,true,$3,$4)", [id, text, createdAt, admin.id]);
+      const ann = { id, text, active: true, createdAt, by: admin.id };
+      sseBroadcast("announcement", ann);
+      return send(res, 201, { announcement: ann });
     }
     return send(res, 404, { error: "Not found." });
   }
