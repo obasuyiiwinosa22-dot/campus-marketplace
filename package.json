@@ -1,0 +1,16 @@
+{
+  "name": "campusmarket",
+  "version": "1.0.0",
+  "description": "CampusMarket backend — REST API + SSE real-time chat backed by PostgreSQL (Node + pg).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.0"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "license": "MIT"
+}

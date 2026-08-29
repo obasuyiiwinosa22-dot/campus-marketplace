@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="CampusMarket — the marketplace built for your campus community." />
+  <title>CampusMarket — Buy & Sell on Campus</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>" />
+</head>
+<body>
+  <div id="app">
+    <!-- Navigation -->
+    <header class="nav" id="nav">
+      <div class="nav__inner">
+        <a href="#/" class="nav__brand" data-link>
+          <span class="nav__logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1-5h16l1 5"/><path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9"/><path d="M9 20v-6h6v6"/></svg>
+          </span>
+          <span class="nav__name">Campus<strong>Market</strong></span>
+        </a>
+
+        <nav class="nav__links" aria-label="Primary">
+          <a href="#/" data-link>Home</a>
+          <a href="#/marketplace" data-link>Marketplace</a>
+          <a href="#/marketplace?cat=services" data-link>Services</a>
+          <a href="#/categories" data-link>Categories</a>
+          <a href="#/sell" data-link class="nav__sell-link">Sell</a>
+          <a href="#/admin" data-link id="navAdmin" style="display:none">Admin</a>
+        </nav>
+
+        <div class="nav__actions">
+          <button class="nav__icon-btn" id="navSearchBtn" aria-label="Search" title="Search">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          </button>
+          <a href="#/favorites" class="nav__icon-btn" data-link aria-label="Favorites" title="Favorites">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
+            <span class="nav__badge" id="favBadge" hidden>0</span>
+          </a>
+          <a href="#/messages" class="nav__icon-btn" data-link aria-label="Messages" title="Messages">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.9-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg>
+            <span class="nav__badge" id="msgBadge" hidden>0</span>
+          </a>
+          <a href="#/notifications" class="nav__icon-btn" data-link aria-label="Notifications" title="Notifications">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+            <span class="nav__badge" id="notifBadge" hidden>0</span>
+          </a>
+          <a href="#/profile" class="nav__avatar" data-link aria-label="Profile">
+            <img src="https://i.pravatar.cc/80?img=12" alt="You" onerror="this.style.background='#5b5bd6';this.removeAttribute('src')" />
+          </a>
+          <button class="nav__burger" id="navBurger" aria-label="Menu">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav__mobile" id="navMobile" hidden>
+        <a href="#/" data-link>Home</a>
+          <a href="#/marketplace" data-link>Marketplace</a>
+          <a href="#/marketplace?cat=services" data-link>Services</a>
+          <a href="#/categories" data-link>Categories</a>
+          <a href="#/sell" data-link>Sell an Item</a>
+          <a href="#/favorites" data-link>Favorites</a>
+          <a href="#/messages" data-link>Messages</a>
+          <a href="#/notifications" data-link>Notifications</a>
+          <a href="#/admin" data-link id="navAdminMobile" style="display:none">Admin</a>
+          <a href="#/profile" data-link>Profile</a>
+      </div>
+    </header>
+
+    <!-- System announcements banner -->
+    <div id="sysBanner" hidden></div>
+
+    <!-- Search overlay -->
+    <div class="search-overlay" id="searchOverlay" hidden>
+      <div class="search-overlay__box">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        <input type="text" id="globalSearch" placeholder="Search textbooks, electronics, fashion and more..." autocomplete="off" />
+        <button id="searchClose" aria-label="Close">Esc</button>
+      </div>
+      <div class="search-overlay__results" id="searchResults"></div>
+    </div>
+
+    <!-- Main app root -->
+    <main id="view" class="view"></main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="footer__inner">
+        <div class="footer__brand">
+          <span class="nav__logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1-5h16l1 5"/><path d="M4 9v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9"/><path d="M9 20v-6h6v6"/></svg>
+          </span>
+          <span>Campus<strong>Market</strong></span>
+        </div>
+        <p class="footer__tag">The marketplace built for your campus community.</p>
+        <div class="footer__links">
+          <a href="#/" data-link>Home</a>
+          <a href="#/marketplace" data-link>Marketplace</a>
+          <a href="#/sell" data-link>Sell</a>
+          <a href="#/profile" data-link>Profile</a>
+        </div>
+        <p class="footer__copy">© <span id="year"></span> Uniben Campus Marketplace.</p>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Toast container -->
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <!-- Modal root -->
+  <div class="modal-root" id="modalRoot" hidden></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

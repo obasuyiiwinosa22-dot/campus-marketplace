@@ -1,0 +1,50 @@
+# Render Blueprint for CampusMarket
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Put this file at the ROOT of your repo (same level as server.js) and in
+# the Render dashboard choose "New +" -> "Blueprint" -> point it at the repo.
+# Render reads this file and creates the service automatically.
+#
+# The database is an EXTERNAL PostgreSQL service (e.g. Aiven). Set
+# DATABASE_URL in the Render dashboard's Environment section after deploy.
+
+services:
+  - type: web
+    name: campusmarket
+    runtime: node
+    plan: free            # bump to "starter" if the free tier sleeps too much for your test
+    region: oregon        # change to whichever region is closest to your users
+    branch: main           # change if your default branch is different
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    autoDeploy: true
+
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+
+      - key: NODE_ENV
+        value: production
+
+      # External PostgreSQL connection string (Aiven). Set the real value
+      # yourself in the dashboard after the first deploy
+      # (Dashboard -> campusmarket -> Environment). Never commit it here.
+      - key: DATABASE_URL
+        sync: false
+
+      # Secrets below: sync: false means Render will NOT auto-generate them —
+      # you set the actual values yourself in the dashboard after the first
+      # deploy (Dashboard -> campusmarket -> Environment). Never commit real
+      # values into this file.
+      - key: SECRET
+        sync: false          # set to a long random string, e.g. `openssl rand -hex 32`
+
+      - key: ADMIN_EMAIL
+        sync: false          # optional: skip if you don't want a moderator account
+
+      - key: ADMIN_PASSWORD
+        sync: false          # optional: only used if ADMIN_EMAIL is also set
+
+      - key: ADMIN_NAME
+        sync: false          # optional
