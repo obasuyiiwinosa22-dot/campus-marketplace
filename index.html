@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#5b5bd6" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="description" content="CampusMarket — the marketplace built for your campus community." />
   <title>CampusMarket — Buy & Sell on Campus</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -36,7 +38,7 @@
           <button class="nav__icon-btn" id="navSearchBtn" aria-label="Search" title="Search">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
           </button>
-          <a href="#/favorites" class="nav__icon-btn" data-link aria-label="Favorites" title="Favorites">
+          <a href="#/favorites" class="nav__icon-btn nav__icon-btn--hide-sm" data-link aria-label="Favorites" title="Favorites">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
             <span class="nav__badge" id="favBadge" hidden>0</span>
           </a>
@@ -44,7 +46,7 @@
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.9-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg>
             <span class="nav__badge" id="msgBadge" hidden>0</span>
           </a>
-          <a href="#/notifications" class="nav__icon-btn" data-link aria-label="Notifications" title="Notifications">
+          <a href="#/notifications" class="nav__icon-btn nav__icon-btn--hide-sm" data-link aria-label="Notifications" title="Notifications">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
             <span class="nav__badge" id="notifBadge" hidden>0</span>
           </a>
@@ -52,27 +54,27 @@
           <a href="#/profile" class="nav__avatar" data-link aria-label="Profile">
             <img src="https://i.pravatar.cc/80?img=12" alt="You" onerror="this.style.background='#5b5bd6';this.removeAttribute('src')" />
           </a>
-          <button class="nav__burger" id="navBurger" aria-label="Menu">
+          <button class="nav__burger" id="navBurger" aria-label="Menu" aria-expanded="false" aria-controls="navMobile">
             <span></span><span></span><span></span>
           </button>
         </div>
       </div>
       <div class="nav__mobile" id="navMobile" hidden>
-        <a href="#/" data-link>Home</a>
-          <a href="#/marketplace" data-link>Marketplace</a>
-          <a href="#/marketplace?cat=services" data-link>Services</a>
-          <a href="#/categories" data-link>Categories</a>
-          <a href="#/sell" data-link>Sell an Item</a>
-          <a href="#/favorites" data-link>Favorites</a>
-          <a href="#/messages" data-link>Messages</a>
-          <a href="#/notifications" data-link>Notifications</a>
-          <a href="#/admin" data-link id="navAdminMobile" style="display:none">Admin</a>
-          <a href="#/profile" data-link>Profile</a>
+        <a href="#/" data-link>🏠 Home</a>
+        <a href="#/marketplace" data-link>🛍️ Marketplace</a>
+        <a href="#/marketplace?cat=services" data-link>🛠️ Services</a>
+        <a href="#/categories" data-link>🗂️ Categories</a>
+        <a href="#/sell" data-link>➕ Sell an Item</a>
+        <a href="#/favorites" data-link>❤️ Favorites <span class="nav__mobile-badge" id="favBadgeMobile" hidden>0</span></a>
+        <a href="#/messages" data-link>💬 Messages <span class="nav__mobile-badge" id="msgBadgeMobile" hidden>0</span></a>
+        <a href="#/notifications" data-link>🔔 Notifications <span class="nav__mobile-badge" id="notifBadgeMobile" hidden>0</span></a>
+        <a href="#/admin" data-link id="navAdminMobile" style="display:none">🛡️ Admin</a>
+        <a href="#/profile" data-link>👤 Profile</a>
       </div>
     </header>
 
-    <!-- System announcements banner -->
-    <div id="sysBanner" hidden></div>
+    <!-- System announcement popup (small, centered, easy to dismiss) -->
+    <div class="ann-pop" id="annPop" hidden></div>
 
     <!-- Search overlay -->
     <div class="search-overlay" id="searchOverlay" hidden>
