@@ -254,7 +254,7 @@ async function getCleanUserById(id) {
 async function getSellersMap(ids) {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (!uniq.length) return {};
-  const r = await q(`SELECT ${USER_COLS} FROM users WHERE id = ANY($1)`, [uniq]);
+  const r = await q(`SELECT ${USER_COLS} FROM users WHERE id = ANY($1::text[])`, [uniq]);
   const map = {};
   r.rows.forEach((row) => { const u = cleanUser(row); map[u.id] = u; });
   return map;
@@ -352,7 +352,7 @@ function send(res, code, obj) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = "";
-    req.on("data", (c) => { data += c; if (data.length > 25 * 1024 * 1024) req.destroy(); });
+    req.on("data", (c) => { data += c; if (data.length > 100 * 1024 * 1024) req.destroy(); });
     req.on("end", () => { if (!data) return resolve({}); try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
     req.on("error", reject);
   });
@@ -656,7 +656,7 @@ async function handleApi(req, res, url) {
     if (method === "GET") {
       const fr = await q("SELECT product_id FROM favorites WHERE user_id=$1", [uid_user]);
       const ids = fr.rows.map((r) => r.product_id);
-      const prods = ids.length ? (await q("SELECT * FROM products WHERE id = ANY($1)", [ids])).rows.map(rowToProduct) : [];
+      const prods = ids.length ? (await q("SELECT * FROM products WHERE id = ANY($1::text[])", [ids])).rows.map(rowToProduct) : [];
       const sellers = await getSellersMap(prods.map((p) => p.sellerId));
       return send(res, 200, { productIds: ids, products: prods.map((p) => productWithSeller(p, sellers)) });
     }
@@ -712,13 +712,16 @@ async function handleApi(req, res, url) {
       if (method === "POST") {
         if (!uid_user) return send(res, 401, { error: "Not authenticated." });
         const b = await readBody(req);
-        if (!b.title || !b.price || !b.category || !b.condition || !b.location)
+        if (!b.title || !b.category || !b.condition || !b.location)
           return send(res, 400, { error: "Please fill in all required fields." });
+        const price = Number(b.price);
+        if (!Number.isFinite(price) || price < 0)
+          return send(res, 400, { error: "Please enter a valid price." });
         const id = uid("p");
         const images = Array.isArray(b.images) ? b.images : [];
         await q(
           "INSERT INTO products (id,seller_id,title,price,description,category,condition,location,status,images,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
-          [id, uid_user, b.title, Number(b.price), b.description || "", b.category, b.condition, b.location, b.status || "Available", toJson(images), Date.now()]
+          [id, uid_user, b.title, price, b.description || "", b.category, b.condition, b.location, b.status || "Available", toJson(images), Date.now()]
         );
         await q("UPDATE users SET listings = listings + 1 WHERE id=$1", [uid_user]);
         const prodRow = (await q("SELECT * FROM products WHERE id=$1", [id])).rows[0];
@@ -938,7 +941,7 @@ async function handleApi(req, res, url) {
       }));
       const repIds = [...new Set(list.map((x) => x.reporterId).filter(Boolean))];
       if (repIds.length) {
-        const repRows = (await q(`SELECT ${USER_COLS} FROM users WHERE id = ANY($1)`, [repIds])).rows.map(cleanUser);
+        const repRows = (await q(`SELECT ${USER_COLS} FROM users WHERE id = ANY($1::text[])`, [repIds])).rows.map(cleanUser);
         const repMap = {}; repRows.forEach((u) => { repMap[u.id] = u; });
         list.forEach((x) => { x.reporter = x.reporterId ? { id: x.reporterId, name: repMap[x.reporterId] ? repMap[x.reporterId].name : "Unknown" } : null; });
       }
@@ -1069,8 +1072,8 @@ const server = http.createServer(async (req, res) => {
     }
     return serveStatic(req, res, url);
   } catch (err) {
-    console.error(err);
-    if (!res.headersSent) send(res, 500, { error: "Server error." });
+    console.error("[API ERROR]", err && err.message, "\n", err && err.stack);
+    if (!res.headersSent) send(res, 500, { error: "Server error.", detail: err && err.message });
   }
 });
 
