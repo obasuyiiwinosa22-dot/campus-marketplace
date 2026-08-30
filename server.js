@@ -574,11 +574,14 @@ async function handleApi(req, res, url) {
       const salt = crypto.randomBytes(16).toString("hex");
       const hash = crypto.scryptSync(b.password, salt, 64).toString("hex");
       const id = uid("u");
+      /* Give every new account a real (random) avatar so they're never shown the
+         empty grey placeholder by default. They can change it any time. */
+      const avatar = b.avatar || `https://i.pravatar.cc/150?img=${1 + (Math.floor(Math.random() * 70))}`;
       await q(
         `INSERT INTO users
           (id,name,email,password_hash,password_salt,role,location,bio,avatar,is_admin,rating,ratings_count,listings,sold,reviews,created_at,email_verified)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,false,0,0,0,0,0,$10,false)`,
-        [id, b.name.trim(), email, hash, salt, b.role || "Student", b.location || "Main Campus", b.bio || "", b.avatar || "", Date.now()]
+        [id, b.name.trim(), email, hash, salt, b.role || "Student", b.location || "Main Campus", b.bio || "", avatar, Date.now()]
       );
       const user = await getCleanUserById(id);
       return send(res, 201, { token: makeToken(user.id), user });
@@ -916,7 +919,6 @@ async function handleApi(req, res, url) {
       if (prodRow.seller_id !== uid_user) return send(res, 403, { error: "Forbidden." });
       const b = await readBody(req);
       const allowed = { title: true, price: true, description: true, category: true, condition: true, location: true, status: true, images: true };
-      const sets = []; const params = []; let i = 1;
       for (const k of Object.keys(b)) {
         if (k === "price") { sets.push(`price=$${i++}`); params.push(Number(b.price)); }
         else if (k === "images") { sets.push(`images=$${i++}`); params.push(toJson(b.images)); }
@@ -1055,6 +1057,32 @@ async function handleApi(req, res, url) {
       resolved.sort((a, b) => (b.banned ? 1 : 0) - (a.banned ? 1 : 0) || a.name.localeCompare(b.name));
       const banned = br.rows.map((row) => ({ email: row.email, userId: row.user_id }));
       return send(res, 200, { users: resolved, banned });
+    }
+    /* Hard-delete an account. Bans are intentionally kept so a deleted address
+       cannot be re-registered (moderator keeps control). Everything the user
+       owned is removed too. The admin cannot delete their own account. */
+    if (seg[1] === "users" && seg[2] === "delete" && method === "POST") {
+      const b = await readBody(req);
+      let email = b.email ? String(b.email).trim().toLowerCase() : null;
+      let userId = b.userId ? String(b.userId).trim() : null;
+      if (!email && !userId) return send(res, 400, { error: "Provide an email or user ID." });
+      let target = null;
+      if (userId) target = await getUserFullById(userId);
+      if (!target && email) target = await getUserFullByEmail(email);
+      if (!target) return send(res, 404, { error: "No account found with that email or ID." });
+      if (target.id === admin.id) return send(res, 400, { error: "You can't delete your own account." });
+      if (target.isAdmin) return send(res, 400, { error: "You can't delete an administrator account." });
+      await q("DELETE FROM products WHERE seller_id=$1", [target.id]);
+      await q("DELETE FROM favorites WHERE user_id=$1", [target.id]);
+      await q("DELETE FROM notifications WHERE user_id=$1", [target.id]);
+      await q("DELETE FROM conversations WHERE participant_ids @> $1::jsonb", [JSON.stringify([target.id])]);
+      await q("DELETE FROM reports WHERE reporter_id=$1", [target.id]);
+      await q("DELETE FROM users WHERE id=$1", [target.id]);
+      // a deleted account is free to be re-created with the same email, so clear any ban
+      await q("DELETE FROM banned WHERE lower(email)=$1", [target.email ? target.email.toLowerCase() : "x"]);
+      await q("DELETE FROM banned WHERE user_id=$1", [target.id]);
+      sseKick(target.id, "banned", { reason: "Your account has been deleted by a moderator." });
+      return send(res, 200, { ok: true, user: { id: target.id, name: target.name, email: target.email } });
     }
     if (seg[1] === "ban" && method === "POST") {
       const b = await readBody(req);
