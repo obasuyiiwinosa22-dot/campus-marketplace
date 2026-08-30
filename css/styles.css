@@ -786,8 +786,28 @@ ul { margin: 0; padding: 0; list-style: none; }
 /* ---- conversation list: product line ---- */
 .conv__product { font-size: 0.78rem; color: var(--primary); font-weight: 600; margin-bottom: 2px; }
 
-/* ---- seller verification badge ---- */
-.vbadge { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; font-size: 11px; line-height: 1; vertical-align: middle; margin-left: 6px; flex: none; transition: transform .15s ease, box-shadow .15s ease; }
+/* neutral grey avatar placeholder (no picture set / remote image failed) */
+.ph--avatar {
+  display: grid; place-items: center;
+  color: #7a7d8a; font-weight: 800; letter-spacing: 0;
+  background: #e7e8ee; text-transform: uppercase;
+  line-height: 1;
+}
+.nav__avatar.ph--avatar { width: 40px; height: 40px; border-radius: 50%; font-size: 1rem; }
+.profile__avatar.ph--avatar { font-size: 2.4rem; border-radius: 28px; }
+.conv__av .ph--avatar { width: 100%; height: 100%; border-radius: 50%; font-size: 1.1rem; }
+.msg__head .ph--avatar { width: 42px; height: 42px; border-radius: 50%; font-size: 1rem; }
+
+/* edit-profile avatar picker */
+.avatar-edit { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.avatar-edit__preview { width: 72px; height: 72px; border-radius: 20px; overflow: hidden; flex: none; box-shadow: var(--shadow-xs); border: 1px solid var(--border); }
+.avatar-edit__preview img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-edit__controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* admin action buttons (ban/unban/delete) */
+.admin-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.admin-actions .btn { flex: none; }
+
 .vbadge--no { color: var(--muted); background: rgba(100,116,139,0.12); border-radius: 6px; }
 .vbadge--no:hover { transform: scale(1.08); }
 .vbadge--yes { background: #16a34a; color: #fff; border-radius: 50%; box-shadow: 0 0 0 3px rgba(22,163,74,0.16); }
