@@ -288,6 +288,13 @@ ul { margin: 0; padding: 0; list-style: none; }
 .card__fav:hover { opacity: 1; transform: scale(1.08); }
 .card__fav.is-active { color: var(--danger); background: #fff; opacity: 1; }
 .card__fav.is-active svg { fill: var(--danger); }
+.card__del {
+  position: absolute; top: 10px; right: 56px; width: 38px; height: 38px; border-radius: 50%;
+  display: grid; place-items: center; background: rgba(225,29,72,0.92); color: #fff;
+  box-shadow: var(--shadow-sm); opacity: .9; transition: opacity .2s, transform .2s, background .2s;
+  z-index: 2;
+}
+.card__del:hover { opacity: 1; transform: scale(1.08); background: #be123c; }
 .card__fav.pop svg { animation: heartPop .45s var(--ease); }
 .card__body { padding: 14px 15px 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
 .card__title { font-size: 1rem; font-weight: 700; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
@@ -635,7 +642,15 @@ ul { margin: 0; padding: 0; list-style: none; }
     border: 1px solid var(--border); border-radius: var(--radius);
     background: var(--surface-2); padding: 10px 12px; margin-bottom: 10px;
   }
-  .admin-table tr.is-banned { border-color: rgba(220,38,38,0.35); background: rgba(220,38,38,0.05); }
+  /* ---- admin: listing manager ---- */
+.admin-listings { margin-top: 6px; display: flex; flex-direction: column; gap: 10px; }
+.admin-listing { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.admin-listing__media { width: 54px; height: 54px; border-radius: 12px; overflow: hidden; flex: none; background: var(--bg-2); }
+.admin-listing__media img, .admin-listing__media .ph { width: 100%; height: 100%; object-fit: cover; }
+.admin-listing__info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.admin-listing__info b { font-size: 0.95rem; }
+.admin-listing__info span { color: var(--muted); font-size: 0.82rem; }
+.admin-listing .btn { flex: none; }
   .admin-table td {
     border: none; padding: 4px 0; display: flex; justify-content: space-between;
     align-items: center; gap: 12px; text-align: right;
