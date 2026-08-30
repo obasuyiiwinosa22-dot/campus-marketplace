@@ -71,6 +71,7 @@ const API = {
   adminRemoveProduct(pid) { return this.post("/api/admin/products/remove", { productId: pid }); },
   adminUsers() { return this.get("/api/admin/users"); },
   adminDeleteUser(payload) { return this.post("/api/admin/users/delete", payload); },
+  adminLookup(params) { return this.get("/api/admin/lookup?" + new URLSearchParams(params).toString()); },
   adminBan(payload) { return this.post("/api/admin/ban", payload); },
   adminUnban(payload) { return this.post("/api/admin/unban", payload); },
   adminAnnouncements() { return this.get("/api/admin/announcements"); },
