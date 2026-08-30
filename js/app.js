@@ -437,7 +437,7 @@
   }
 
   /* ---------------- product card ---------------- */
-  function cardHTML(p) {
+  function cardHTML(p, isOwner) {
     const fav = State.favs.has(p.id);
     const src = (p.images && p.images[0]) || "";
     return `
@@ -448,6 +448,7 @@
       <button class="card__fav ${fav ? "is-active" : ""}" data-fav="${p.id}" aria-label="Save" title="Save">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="${fav ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
       </button>
+      ${isOwner ? `<button class="card__del" data-del-listing type="button" aria-label="Delete listing" title="Delete listing"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ""}
       <a class="card__body" href="#/product/${p.id}" data-link>
         <span class="card__title">${esc(p.title)}</span>
         <span class="card__price">${money(p.price)}</span>
@@ -663,6 +664,7 @@
             <div class="pdp__actions">
               <button class="btn btn--primary btn--lg" id="contactSeller" style="flex:1">💬 Contact Seller</button>
               <button class="btn btn--ghost btn--lg" id="saveBtn" data-fav="${p.id}">${fav ? "♥ Saved" : "♡ Save"}</button>
+              ${(State.me && u && (State.me.id === u.id || State.me.isAdmin)) ? `<button class="btn btn--danger btn--lg" id="deleteListing" style="flex:1">🗑 Delete listing</button>` : ""}
             </div>
             ${State.me && u && State.me.id !== u.id ? `<button class="btn btn--ghost btn--sm" id="reportBtn" style="margin-top:10px;align-self:flex-start">⚑ Report listing</button>` : ""}
             <div class="pdp__seller">
@@ -702,6 +704,13 @@
     saveBtn.addEventListener("click", () => { const on = State.favs.has(p.id); toggleFav(p.id, saveBtn); saveBtn.textContent = (on ? "♡ Save" : "♥ Saved"); });
     const reportBtn = $("#reportBtn");
     if (reportBtn) reportBtn.addEventListener("click", () => openReportModal(p));
+    const delBtn = $("#deleteListing");
+    if (delBtn) delBtn.addEventListener("click", async () => {
+      if (!window.confirm("Delete this listing? This cannot be undone.")) return;
+      delBtn.disabled = true;
+      try { await API.deleteProduct(p.id); toast("Listing deleted", "Your item was removed.", "🗑"); location.hash = State.me && State.me.id === (u && u.id) ? "#/profile" : "#/marketplace"; }
+      catch (err) { delBtn.disabled = false; toast("Couldn't delete", err.message, "⚠️"); }
+    });
     const rs = $("#rateStars");
     if (rs) rs.addEventListener("click", async (e) => { const r = e.target.dataset.r; if (!r) return; if (!State.me) return openAuth(); try { await API.rateUser(u.id, +r); toast("Rating sent", "Thanks for the feedback ⭐"); } catch (err) { toast("Error", err.message, "⚠️"); } });
 
@@ -917,11 +926,25 @@
           ${isMe ? `<button class="btn btn--primary btn--sm" id="editProfile">Edit profile</button>` : ""}
           ${isMe ? `<a class="btn btn--ghost btn--sm" href="#/sell" data-link>＋ Sell</a>` : ""}
         </div>
-        <div class="grid grid--4" id="userGrid">${prods.length ? prods.map(cardHTML).join("") : emptyHTML("📦", "No listings yet", isMe ? "List something to see it here." : "This seller has no active listings.", "#/sell", "Sell an Item")}</div>
+        <div class="grid grid--4" id="userGrid">${prods.length ? prods.map((pr) => cardHTML(pr, isMe)).join("") : emptyHTML("📦", "No listings yet", isMe ? "List something to see it here." : "This seller has no active listings.", "#/sell", "Sell an Item")}</div>
         ${isMe ? `<div style="text-align:center;margin-top:30px"><button class="btn btn--ghost" id="logoutBtn">Log out</button></div>` : ""}
       </section>`;
     observeReveals();
-    if (isMe) paintVerify();
+    if (isMe) {
+      paintVerify();
+      // sellers can delete their own listings straight from their profile
+      $$("#userGrid .card").forEach((card) => {
+        const id = card.getAttribute("data-id");
+        const btn = card.querySelector("[data-del-listing]");
+        if (btn) btn.addEventListener("click", async (e) => {
+          e.preventDefault(); e.stopPropagation();
+          if (!window.confirm("Delete this listing? This cannot be undone.")) return;
+          btn.disabled = true;
+          try { await API.deleteProduct(id); toast("Listing deleted", "Your item was removed.", "🗑"); renderProfile(u.id); }
+          catch (err) { btn.disabled = false; toast("Couldn't delete", err.message, "⚠️"); }
+        });
+      });
+    }
     const ep = $("#editProfile");
     if (ep) ep.addEventListener("click", () => {
       let pendingAvatar = null; // base64 data URL, "" to clear, or null to keep
@@ -1146,6 +1169,16 @@
           <h3>👥 Users</h3>
           <div id="adminUsers" class="admin-users"></div>
         </div>
+        <div class="admin-card" style="margin-top:24px">
+          <h3>🗂️ Manage Listings</h3>
+          <p class="muted admin-hint">Look up any user to delete their listings directly (not just reported ones).</p>
+          <form id="lookupForm" class="form-grid">
+            <div class="field"><label>User email</label><input class="field-input" id="lookupEmail" type="email" placeholder="user@campus.market" autocomplete="off"></div>
+            <div class="field"><label>or User ID</label><input class="field-input" id="lookupId" placeholder="u107" autocomplete="off"></div>
+            <button class="btn btn--primary btn--sm" type="submit">Find listings</button>
+          </form>
+          <div id="adminListings" class="admin-listings"></div>
+        </div>
       </section>`;
 
     $("#annForm").addEventListener("submit", async (e) => {
@@ -1166,6 +1199,38 @@
         toast("Account banned", (r.user ? r.user.name + " (" + r.user.email + ")" : email || uidv) + " is suspended.", "🚫");
         adminLoadUsers();
       } catch (err) { toast("Couldn't ban", err.message, "⚠️"); }
+    });
+
+    $("#lookupForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = $("#lookupEmail").value.trim();
+      const id = $("#lookupId").value.trim();
+      if (!email && !id) return toast("Add email or ID", "Enter the user to look up.", "⚠️");
+      const box = $("#adminListings");
+      box.innerHTML = `<p class="muted">Searching…</p>`;
+      try {
+        const { user, products } = await API.adminLookup({ email, id });
+        if (!products.length) {
+          box.innerHTML = `<p class="muted">${esc(user.name)} (${esc(user.email)}) has no active listings.</p>`;
+          return;
+        }
+        box.innerHTML = `<p class="muted" style="margin:14px 0 10px">${esc(user.name)} (${esc(user.email)}) — ${products.length} listing${products.length === 1 ? "" : "s"}:</p>` +
+          products.map((p) => `
+            <div class="admin-listing" data-id="${p.id}">
+              <div class="admin-listing__media">${mediaHTML({ src: (p.images && p.images[0]) || "", alt: p.title, seed: p.id, emoji: catIcon(p.category) })}</div>
+              <div class="admin-listing__info">
+                <b>${esc(p.title)}</b>
+                <span>${money(p.price)} · ${esc(p.condition)} · ${esc(p.location)}</span>
+              </div>
+              <button class="btn btn--danger btn--sm" data-remove-listing="${p.id}" data-name="${esc(p.title)}">Delete</button>
+            </div>`).join("");
+        $$("#adminListings [data-remove-listing]").forEach((b) => b.addEventListener("click", async () => {
+          if (!window.confirm(`Delete listing "${b.dataset.name}"? This cannot be undone.`)) return;
+          b.disabled = true;
+          try { await API.deleteProduct(b.dataset.removeListing); toast("Listing deleted", b.dataset.name + " removed.", "🗑"); b.closest(".admin-listing").remove(); }
+          catch (err) { b.disabled = false; toast("Couldn't delete", err.message, "⚠️"); }
+        }));
+      } catch (err) { box.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
     });
 
     adminLoadReports(); adminLoadUsers(); adminLoadAnnouncements();
