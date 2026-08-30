@@ -54,24 +54,49 @@
   function wait(ms) { return new Promise((r) => setTimeout(r, ms)); }
   function currentHash() { return location.hash || "#/"; }
 
-  function mediaHTML({ src, alt, cls = "", seed, emoji }) {
-    if (src) return `<img src="${esc(src)}" alt="${esc(alt)}" class="${cls}" loading="lazy" data-seed="${esc(seed)}" data-emoji="${emoji || ""}" onerror="CM.imgFail(this)">`;
+  function mediaHTML({ src, alt, cls = "", seed, emoji, initial }) {
+    if (src) return `<img src="${esc(src)}" alt="${esc(alt)}" class="${cls}" loading="lazy" data-seed="${esc(seed)}" data-emoji="${emoji || ""}" data-initial="${esc(initial || "?")}" onerror="CM.imgFail(this)">`;
     const [c1, c2] = gradFor(seed + emoji);
     return `<div class="${cls} ph" style="background:linear-gradient(135deg,${c1},${c2})">${emoji || ""}</div>`;
   }
   window.CM.imgFail = function (el) {
     const seed = el.getAttribute("data-seed") || el.alt || "x";
     const emoji = el.getAttribute("data-emoji") || "🛍️";
-    const [c1, c2] = gradFor(seed + emoji);
     const div = document.createElement("div");
-    div.className = (el.className ? el.className + " " : "") + "ph";
-    div.style.background = `linear-gradient(135deg, ${c1}, ${c2})`;
-    div.textContent = emoji;
+    if (emoji === "🧑") {
+      // a broken avatar (e.g. pravatar down) -> neutral grey circle with initial
+      const initial = (el.getAttribute("data-initial") || "?").toUpperCase();
+      div.className = (el.className ? el.className + " " : "") + "ph ph--avatar";
+      div.style.background = "#e7e8ee";
+      div.style.color = "#7a7d8a";
+      div.textContent = initial;
+    } else {
+      const [c1, c2] = gradFor(seed + emoji);
+      div.className = (el.className ? el.className + " " : "") + "ph";
+      div.style.background = `linear-gradient(135deg, ${c1}, ${c2})`;
+      div.textContent = emoji;
+    }
     el.replaceWith(div);
   };
+  /* A "real" avatar is one the user actually set (upload or a stored http(s) URL).
+     We no longer treat an auto-generated pravatar as a real avatar, so a user
+     with no picture gets the neutral grey placeholder instead of a default face. */
+  function realAvatar(u) {
+    const a = u && u.avatar;
+    if (!a) return "";
+    if (typeof a !== "string") return "";
+    if (/^data:image\//i.test(a)) return a;
+    if (/^https?:\/\//i.test(a)) return a;
+    return "";
+  }
   function avatarHTML(u, cls = "") {
-    const src = u && u.avatar ? u.avatar : (u ? `https://i.pravatar.cc/120?u=${esc(u.id)}` : "");
-    return mediaHTML({ src, alt: u ? u.name : "User", cls, seed: u ? u.id : "x", emoji: "🧑" });
+    const src = realAvatar(u);
+    const name = u && u.name ? u.name : "";
+    const initial = (name.trim()[0] || "?").toUpperCase();
+    if (src) return mediaHTML({ src, alt: name, cls, seed: u && u.id ? u.id : "x", emoji: "🧑", initial });
+    // neutral grey placeholder with the user's initial
+    const ph = `<div class="${cls} ph ph--avatar" style="background:#e7e8ee;color:#7a7d8a">${esc(initial)}</div>`;
+    return ph;
   }
 
   /* ---------------- toasts ---------------- */
@@ -109,7 +134,7 @@
     const a = $(".nav__avatar");
     if (!a) return;
     if (State.me) a.innerHTML = avatarHTML(State.me);
-    else a.innerHTML = `<img src="https://i.pravatar.cc/80?img=12" alt="You" onerror="this.style.background='#5b5bd6';this.removeAttribute('src')">`;
+    else a.innerHTML = `<div class="nav__avatar ph ph--avatar" style="background:#e7e8ee;color:#7a7d8a">?</div>`;
     const admin = !!(State.me && State.me.isAdmin);
     [$("#navAdmin"), $("#navAdminMobile")].forEach((el) => { if (el) el.style.display = admin ? "" : "none"; });
     renderOnlineCounter();
@@ -899,15 +924,55 @@
     if (isMe) paintVerify();
     const ep = $("#editProfile");
     if (ep) ep.addEventListener("click", () => {
+      let pendingAvatar = null; // base64 data URL, "" to clear, or null to keep
+      const curAvatar = realAvatar(u);
       openModal(`<h3>Edit profile</h3>
         <form id="editForm" class="form-grid">
+          <div class="field">
+            <label>Profile picture</label>
+            <div class="avatar-edit">
+              <div class="avatar-edit__preview" id="avatarPreview">${avatarHTML(u)}</div>
+              <div class="avatar-edit__controls">
+                <input type="file" id="avatarFile" accept="image/*" hidden>
+                <button type="button" class="btn btn--soft btn--sm" id="avatarPick">Choose photo</button>
+                ${curAvatar ? `<button type="button" class="btn btn--ghost btn--sm" id="avatarClear">Remove</button>` : ""}
+                <span class="muted" style="font-size:0.78rem">PNG/JPG, max 2 MB.</span>
+              </div>
+            </div>
+          </div>
           <div class="field"><label>Name</label><input class="field-input" name="name" value="${esc(u.name)}"></div>
           <div class="field"><label>Role</label><input class="field-input" name="role" value="${esc(u.role)}"></div>
           <div class="field"><label>Location</label><input class="field-input" name="location" value="${esc(u.location)}"></div>
           <div class="field"><label>Bio</label><textarea class="field-input" name="bio">${esc(u.bio || "")}</textarea></div>
           <div class="modal__actions" style="justify-content:flex-end"><button class="btn btn--ghost" type="button" onclick="document.getElementById('modalRoot').hidden=true">Cancel</button><button class="btn btn--primary" type="submit">Save</button></div>
         </form>`);
-      $("#editForm").addEventListener("submit", async (e) => { e.preventDefault(); const fd = Object.fromEntries(new FormData(e.target).entries()); try { const { user } = await API.updateUser(u.id, fd); State.me = user; updateNavUser(); closeModal(); toast("Profile updated", "", "✓"); renderProfile(u.id); } catch (err) { toast("Error", err.message, "⚠️"); } });
+
+      const fileInput = $("#avatarFile"), preview = $("#avatarPreview"), pick = $("#avatarPick"), clear = $("#avatarClear");
+      if (pick) pick.addEventListener("click", () => fileInput.click());
+      if (fileInput) fileInput.addEventListener("change", () => {
+        const f = fileInput.files && fileInput.files[0];
+        if (!f) return;
+        if (!f.type.startsWith("image/")) { toast("Not an image", "Please choose a photo.", "⚠️"); return; }
+        if (f.size > 2 * 1024 * 1024) { toast("Too large", "Image must be under 2 MB.", "⚠️"); return; }
+        const reader = new FileReader();
+        reader.onload = () => { pendingAvatar = reader.result; preview.innerHTML = `<img src="${reader.result}" alt="preview" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">`; };
+        reader.readAsDataURL(f);
+      });
+      if (clear) clear.addEventListener("click", () => { pendingAvatar = ""; preview.innerHTML = avatarHTML({ name: u.name }); });
+
+      $("#editForm").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const fd = Object.fromEntries(new FormData(e.target).entries());
+        if (pendingAvatar !== null) fd.avatar = pendingAvatar; // keep, set or clear
+        try {
+          const { user } = await API.updateUser(u.id, fd);
+          State.me = user;
+          updateNavUser();
+          closeModal();
+          toast("Profile updated", "", "✓");
+          renderProfile(u.id);
+        } catch (err) { toast("Error", err.message, "⚠️"); }
+      });
     });
     const lo = $("#logoutBtn"); if (lo) lo.addEventListener("click", logout);
   }
@@ -1145,11 +1210,14 @@
           <td data-label="ID"><code>${esc(u.id)}</code></td>
           <td data-label="Listings">${u.listings || 0}</td>
           <td data-label="Status">${u.banned ? '<span class="pill pill--danger">Banned</span>' : '<span class="pill pill--ok">Active</span>'}</td>
-          <td data-label="Action">${u.isAdmin && !u.banned
+          <td data-label="Action">${u.isAdmin
             ? `<span class="muted">—</span>`
-            : u.banned
-              ? `<button class="btn btn--soft btn--sm" data-unban-id="${esc(u.id)}" data-unban-email="${esc(u.email)}" data-name="${esc(u.name)}">Unban</button>`
-              : `<button class="btn btn--danger btn--sm" data-ban-id="${esc(u.id)}" data-ban-email="${esc(u.email)}" data-name="${esc(u.name)}">Ban</button>`}</td>
+            : `<div class="admin-actions">
+                 ${u.banned
+                   ? `<button class="btn btn--soft btn--sm" data-unban-id="${esc(u.id)}" data-unban-email="${esc(u.email)}" data-name="${esc(u.name)}">Unban</button>`
+                   : `<button class="btn btn--danger btn--sm" data-ban-id="${esc(u.id)}" data-ban-email="${esc(u.email)}" data-name="${esc(u.name)}">Ban</button>`}
+                 <button class="btn btn--ghost btn--sm" data-del-id="${esc(u.id)}" data-del-email="${esc(u.email)}" data-name="${esc(u.name)}">Delete</button>
+               </div>`}</td>
         </tr>`).join("");
       el.innerHTML = `<div class="table-scroll"><table class="admin-table"><thead><tr><th>Name</th><th>Email</th><th>ID</th><th>Listings</th><th>Status</th><th></th></tr></thead><tbody>
         ${rows}
@@ -1175,6 +1243,17 @@
           toast("Account restored", name + " can log in again.", "✅");
           adminLoadUsers();
         } catch (e) { b.disabled = false; toast("Couldn't unban", e.message, "⚠️"); }
+      }));
+      $$("#adminUsers [data-del-id]").forEach((b) => b.addEventListener("click", async () => {
+        const name = b.dataset.name || b.dataset.delEmail;
+        if (!window.confirm(`Permanently DELETE the account for ${name}?\n\nAll their listings, messages and data will be removed. This cannot be undone.`)) return;
+        b.disabled = true;
+        try {
+          // send BOTH id and email so the right account is found either way
+          await API.adminDeleteUser({ userId: b.dataset.delId, email: b.dataset.delEmail });
+          toast("Account deleted", name + "'s account was removed.", "🗑");
+          adminLoadUsers();
+        } catch (e) { b.disabled = false; toast("Couldn't delete", e.message, "⚠️"); }
       }));
     } catch (e) { el.innerHTML = `<p class="muted">Failed to load users: ${esc(e.message)}</p>`; }
   }
