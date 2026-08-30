@@ -70,6 +70,7 @@ const API = {
   adminResolveReport(id) { return this.post("/api/admin/reports/resolve", { id }); },
   adminRemoveProduct(pid) { return this.post("/api/admin/products/remove", { productId: pid }); },
   adminUsers() { return this.get("/api/admin/users"); },
+  adminDeleteUser(payload) { return this.post("/api/admin/users/delete", payload); },
   adminBan(payload) { return this.post("/api/admin/ban", payload); },
   adminUnban(payload) { return this.post("/api/admin/unban", payload); },
   adminAnnouncements() { return this.get("/api/admin/announcements"); },
