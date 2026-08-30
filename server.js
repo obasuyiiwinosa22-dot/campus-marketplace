@@ -682,6 +682,21 @@ async function handleApi(req, res, url) {
     return send(res, 200, { user });
   }
 
+  // /api/admin/lookup — resolve a user (and their listings) by email or id, for moderation
+  if (seg[0] === "admin" && seg[1] === "lookup" && method === "GET") {
+    const admin = uid_user ? await getUserFullById(uid_user) : null;
+    if (!admin || !admin.isAdmin) return send(res, 403, { error: "Admin access required." });
+    const email = (url.searchParams.get("email") || "").trim().toLowerCase();
+    const id = (url.searchParams.get("id") || "").trim();
+    if (!email && !id) return send(res, 400, { error: "Provide an email or id." });
+    const target = id ? await getUserFullById(id) : await getUserFullByEmail(email);
+    if (!target) return send(res, 404, { error: "No account found." });
+    const pr = await q("SELECT * FROM products WHERE seller_id=$1 AND status <> 'Removed'", [target.id]);
+    const list = pr.rows.map(rowToProduct).sort((a, b) => b.createdAt - a.createdAt);
+    const sellers = await getSellersMap(list.map((p) => p.sellerId));
+    return send(res, 200, { user: cleanUser(target), products: list.map((p) => productWithSeller(p, sellers)) });
+  }
+
   // /api/presence — live online users (count for everyone, ids for logged-in users)
   if (seg[0] === "presence" && method === "GET") {
     const p = presencePayload();
@@ -932,7 +947,11 @@ async function handleApi(req, res, url) {
     if (!seg[2] && method === "DELETE") {
       const prodRow = (await q("SELECT * FROM products WHERE id=$1", [pid])).rows[0];
       if (!prodRow) return send(res, 404, { error: "Not found." });
-      if (prodRow.seller_id !== uid_user) return send(res, 403, { error: "Forbidden." });
+      const requester = await getUserFullById(uid_user);
+      const isOwner = prodRow.seller_id === uid_user;
+      const isAdmin = !!(requester && requester.isAdmin);
+      /* a seller can delete their own listing; an admin can delete any listing */
+      if (!isOwner && !isAdmin) return send(res, 403, { error: "Forbidden." });
       await q("UPDATE products SET status='Removed' WHERE id=$1", [pid]);
       if (prodRow.seller_id) await q("UPDATE users SET listings = GREATEST(0, listings - 1) WHERE id=$1", [prodRow.seller_id]);
       return send(res, 200, { ok: true });
