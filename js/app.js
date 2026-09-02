@@ -506,11 +506,11 @@
       <section class="section wrap" style="padding-top:0">
         <div class="section-head"><div><span class="eyebrow">Handpicked</span><h2 style="margin-top:12px">Featured Listings</h2><p>Popular items from students around campus.</p></div>
           <a class="link-arrow" href="#/marketplace" data-link>View All <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a></div>
-        <div class="grid grid--4" id="featuredGrid">${featured.length ? featured.map(cardHTML).join("") : emptyHTML("🔍","No listings yet","Be the first to list something.","#/sell","Sell an Item")}</div>
+        <div class="grid grid--4" id="featuredGrid">${featured.length ? featured.map((p) => cardHTML(p, false)).join("") : emptyHTML("🔍","No listings yet","Be the first to list something.","#/sell","Sell an Item")}</div>
       </section>
       <section class="section wrap" style="padding-top:0">
         <div class="section-head"><div><span class="eyebrow">Fresh</span><h2 style="margin-top:12px">Recent Listings</h2><p>Just added by students near you.</p></div></div>
-        <div class="grid grid--4" id="recentGrid">${recent.map(cardHTML).join("")}</div>
+        <div class="grid grid--4" id="recentGrid">${recent.map((p) => cardHTML(p, false)).join("")}</div>
       </section>
       <section class="section wrap" style="padding-top:0">
         <div class="reveal" style="background:linear-gradient(120deg,#5b5bd6,#8b5cf6);border-radius:var(--radius-lg);padding:48px;text-align:center;color:#fff;box-shadow:var(--shadow-md)">
@@ -542,7 +542,7 @@
       const list = (await API.products({ q: state.q, cat: state.cat, cond: state.cond, max: state.max, loc: state.loc, sort: state.sort })).products;
       $("#mktCount").innerHTML = `<b>${list.length}</b> item${list.length === 1 ? "" : "s"}${state.cat ? " in " + esc(catLabel(state.cat)) : ""}`;
       const grid = $("#mktGrid");
-      grid.innerHTML = list.length ? list.map(cardHTML).join("") : emptyHTML("🔍", "No matches found", "Try adjusting your filters or search terms.", "#/home", "Browse Marketplace");
+      grid.innerHTML = list.length ? list.map((p) => cardHTML(p, false)).join("") : emptyHTML("🔍", "No matches found", "Try adjusting your filters or search terms.", "#/home", "Browse Marketplace");
       observeReveals();
     }
     view.innerHTML = `
@@ -1007,7 +1007,7 @@
     view.innerHTML = `
       <section class="section wrap" style="padding-top:36px">
         <div class="section-head"><div><span class="eyebrow">❤️ Saved</span><h2 style="margin-top:12px">Your Favorites</h2><p>Items you're interested in, all in one place.</p></div></div>
-        <div class="grid grid--4" id="favGrid">${prods.length ? prods.map(cardHTML).join("") : emptyHTML("❤️", "No Favorites Yet", "Nothing saved yet. Save products you're interested in and they'll appear here.", "#/marketplace", "Browse Marketplace")}</div>
+        <div class="grid grid--4" id="favGrid">${prods.length ? prods.map((p) => cardHTML(p, false)).join("") : emptyHTML("❤️", "No Favorites Yet", "Nothing saved yet. Save products you're interested in and they'll appear here.", "#/marketplace", "Browse Marketplace")}</div>
       </section>`;
     observeReveals();
   }
