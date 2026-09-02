@@ -82,10 +82,7 @@ async function migrate() {
       verify_attempts INT DEFAULT 0,
       verify_cooldown_until BIGINT DEFAULT 0,
       verify_send_count INT DEFAULT 0,
-      verify_send_window_start BIGINT DEFAULT 0,
-      id_card_image TEXT,
-      id_card_status TEXT DEFAULT 'none',
-      id_card_rejected_reason TEXT
+      verify_send_window_start BIGINT DEFAULT 0
     )`,
     `CREATE TABLE IF NOT EXISTS products (
       id TEXT PRIMARY KEY,
@@ -181,7 +178,7 @@ async function seedModerator() {
 }
 
 /* ---------------- row mappers ---------------- */
-const USER_COLS = "id,name,email,role,location,bio,avatar,is_admin,rating,ratings_count,listings,sold,reviews,created_at,email_verified,id_card_status,id_card_rejected_reason";
+const USER_COLS = "id,name,email,role,location,bio,avatar,is_admin,rating,ratings_count,listings,sold,reviews,created_at,email_verified";
 
 function cleanUser(row) {
   if (!row) return null;
@@ -201,8 +198,6 @@ function cleanUser(row) {
     reviews: row.reviews || 0,
     createdAt: row.created_at != null ? parseInt(row.created_at) : 0,
     emailVerified: !!row.email_verified,
-    idCardStatus: row.id_card_status || "none",
-    idCardRejectedReason: row.id_card_rejected_reason || "",
   };
 }
 function fullUser(row) {
@@ -675,22 +670,6 @@ async function handleApi(req, res, url) {
       );
       const updated = await getCleanUserById(u.id);
       return send(res, 200, { ok: true, verified: true, user: updated });
-    }
-    if (seg[1] === "id" && method === "POST") {
-      if (!uid_user) return send(res, 401, { error: "Not authenticated." });
-      const b = await readBody(req);
-      const image = (b && b.image) || "";
-      if (!image || !/^data:image\//.test(image)) return send(res, 400, { error: "Please upload a valid image of your student ID." });
-      if (image.length > 10 * 1024 * 1024) return send(res, 400, { error: "Image too large. Max 10MB." });
-      const u = await getUserFullById(uid_user);
-      if (!u) return send(res, 401, { error: "Not authenticated." });
-      if (u.idCardStatus === "approved") return send(res, 400, { error: "Your student ID is already verified." });
-      await q(
-        "UPDATE users SET id_card_image=$1, id_card_status='pending', id_card_rejected_reason=NULL WHERE id=$2",
-        [image, uid_user]
-      );
-      const clean = await getCleanUserById(uid_user);
-      return send(res, 200, { ok: true, user: clean });
     }
     return send(res, 404, { error: "Not found." });
   }
@@ -1225,27 +1204,6 @@ async function handleApi(req, res, url) {
       const ann = { id, text, active: true, createdAt, by: admin.id };
       sseBroadcast("announcement", ann);
       return send(res, 201, { announcement: ann });
-    }
-    if (seg[1] === "verifications" && method === "GET") {
-      const r = await q(`SELECT ${USER_COLS}, id_card_image FROM users WHERE id_card_status='pending' ORDER BY created_at ASC`);
-      const list = r.rows.map((row) => ({ user: cleanUser(row), idCardImage: row.id_card_image || "" }));
-      return send(res, 200, { verifications: list });
-    }
-    if (seg[1] === "verifications" && seg[2] === "approve" && method === "POST") {
-      const b = await readBody(req);
-      if (!b.userId) return send(res, 400, { error: "Provide a user ID." });
-      await q("UPDATE users SET id_card_status='approved', email_verified=true WHERE id=$1", [b.userId]);
-      await addNotification({ userId: b.userId, type: "verify", text: "Your student ID has been verified. You are now a verified seller!", createdAt: Date.now() });
-      sseEmit(b.userId, "verified", { verified: true });
-      return send(res, 200, { ok: true });
-    }
-    if (seg[1] === "verifications" && seg[2] === "reject" && method === "POST") {
-      const b = await readBody(req);
-      if (!b.userId) return send(res, 400, { error: "Provide a user ID." });
-      const reason = (b.reason || "").trim() || "ID image was not clear or did not match UNIBEN student ID format.";
-      await q("UPDATE users SET id_card_status='rejected', id_card_rejected_reason=$1 WHERE id=$2", [reason, b.userId]);
-      await addNotification({ userId: b.userId, type: "verify", text: "Your student ID was not approved: " + reason, createdAt: Date.now() });
-      return send(res, 200, { ok: true });
     }
     return send(res, 404, { error: "Not found." });
   }

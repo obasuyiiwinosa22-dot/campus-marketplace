@@ -64,7 +64,6 @@ const API = {
   /* verification */
   verifySend(email) { return this.post("/api/verify/send", { email }); },
   verifyCheck(code) { return this.post("/api/verify/check", { code }); },
-  verifyId(image) { return this.post("/api/verify/id", { image }); },
 
   /* admin */
   adminReports() { return this.get("/api/admin/reports"); },
@@ -79,9 +78,6 @@ const API = {
   adminPostAnnouncement(text) { return this.post("/api/admin/announcements", { text }); },
   adminToggleAnnouncement(id) { return this.post("/api/admin/announcements/toggle", { id }); },
   adminDeleteAnnouncement(id) { return this.post("/api/admin/announcements/delete", { id }); },
-  adminVerifications() { return this.get("/api/admin/verifications"); },
-  adminApproveId(userId) { return this.post("/api/admin/verifications/approve", { userId }); },
-  adminRejectId(userId, reason) { return this.post("/api/admin/verifications/reject", { userId, reason }); },
 
   /* favorites */
   favorites() { return this.get("/api/favorites"); },

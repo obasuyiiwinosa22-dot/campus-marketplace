@@ -46,10 +46,6 @@
   }
   function verifyBadge(u) {
     if (!u) return "";
-    const idStatus = u.idCardStatus || "none";
-    if (u.emailVerified && idStatus === "approved") {
-      return `<span class="vbadge vbadge--yes" title="Verified student — ID confirmed" aria-label="Verified student"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>`;
-    }
     if (u.emailVerified) {
       return `<span class="vbadge vbadge--yes" title="Verified seller" aria-label="Verified seller"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>`;
     }
@@ -853,109 +849,50 @@
     const el = $("#verifyCard"); if (!el) return;
     const me = State.me;
     if (!me) { el.innerHTML = ""; return; }
-
-    const idStatus = me.idCardStatus || "none";
-
-    if (me.emailVerified && idStatus === "approved") {
-      el.innerHTML = `<div class="verify-done"><span class="vbadge vbadge--yes"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span><div><b>Verified student</b><p>Your UNIBEN student ID has been verified. You're a trusted seller!</p></div></div>`;
+    if (me.emailVerified) {
+      el.innerHTML = `<div class="verify-done"><span class="vbadge vbadge--yes">✓</span><div><b>Verified seller</b><p>Your seller account has been verified.</p></div></div>`;
       return;
     }
-
-    if (idStatus === "pending") {
-      el.innerHTML = `<b>Student ID verification</b>
-        <p style="color:var(--gold);font-weight:600;display:flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Review in progress</p>
-        <p class="muted">Your student ID is being reviewed by our team. This usually takes 1-24 hours.</p>`;
-      return;
+    if (State.verifyPending) {
+      el.innerHTML = `<b>Seller verification</b>
+        <p>Check your email</p>
+        <p class="muted" style="margin-bottom:12px">We've sent a 6-digit verification code to your email.</p>
+        <form id="codeForm" class="form-grid">
+          <input class="field-input" id="codeInput" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="••••••" style="letter-spacing:8px;text-align:center;font-size:1.25rem;font-weight:800">
+          <button class="btn btn--primary btn--sm" type="submit">Verify</button>
+        </form>
+        <button class="btn btn--ghost btn--sm" id="resendBtn" type="button">Didn't receive it? Resend code</button>
+        <span class="muted" id="verifyMsg" style="display:block;margin-top:8px"></span>`;
+    } else {
+      el.innerHTML = `<b>Seller verification</b>
+        <p>Your seller account is not verified.</p>
+        <form id="emailForm" class="form-grid">
+          <input class="field-input" id="verifyEmail" type="email" value="${esc(me.email || "")}" placeholder="example@email.com">
+          <button class="btn btn--primary btn--sm" type="submit">Verify email</button>
+        </form>`;
     }
-
-    if (idStatus === "rejected") {
-      const reason = me.idCardRejectedReason || "ID image was not clear or did not match UNIBEN student ID format.";
-      el.innerHTML = `<b>Student ID verification</b>
-        <p style="color:#ef4444;font-weight:600;display:flex;align-items:center;gap:6px"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg> Not approved</p>
-        <p class="muted" style="margin-bottom:12px">Reason: ${esc(reason)}</p>
-        <p class="muted" style="margin-bottom:12px">Please upload a clear photo of your UNIBEN student ID card.</p>
-        <div class="id-upload-zone" id="idUploadZone">
-          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 6px;display:block;opacity:.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-          <p style="margin:0 0 6px"><b>Upload your student ID</b></p>
-          <p style="margin:0">Click or drag an image here</p>
-          <input type="file" id="idFileInput" accept="image/*" hidden>
-        </div>
-        <div class="id-upload-preview" id="idUploadPreview" style="display:none">
-          <img id="idPreviewImg" src="" alt="ID preview" style="max-width:200px;border-radius:8px;margin:10px 0">
-          <button class="btn btn--primary btn--sm" id="submitIdBtn" type="button">Submit for review</button>
-          <button class="btn btn--ghost btn--sm" id="cancelIdBtn" type="button">Cancel</button>
-        </div>`;
-      setupIdUpload();
-      return;
-    }
-
-    el.innerHTML = `<b>Student ID verification</b>
-      <p>Verify your UNIBEN student ID to become a trusted seller.</p>
-      <p class="muted" style="margin-bottom:12px">Upload a clear photo of your student ID card. Our team will review it.</p>
-      <div class="id-upload-zone" id="idUploadZone">
-        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin:0 auto 6px;display:block;opacity:.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-        <p style="margin:0 0 6px"><b>Upload your student ID</b></p>
-        <p style="margin:0">Click or drag an image here</p>
-        <input type="file" id="idFileInput" accept="image/*" hidden>
-      </div>
-      <div class="id-upload-preview" id="idUploadPreview" style="display:none">
-        <img id="idPreviewImg" src="" alt="ID preview" style="max-width:200px;border-radius:8px;margin:10px 0">
-        <button class="btn btn--primary btn--sm" id="submitIdBtn" type="button">Submit for review</button>
-        <button class="btn btn--ghost btn--sm" id="cancelIdBtn" type="button">Cancel</button>
-      </div>`;
-    setupIdUpload();
-
-    function setupIdUpload() {
-      let idImage = null;
-      const zone = $("#idUploadZone");
-      const input = $("#idFileInput");
-      const preview = $("#idUploadPreview");
-      const previewImg = $("#idPreviewImg");
-      const submitBtn = $("#submitIdBtn");
-      const cancelBtn = $("#cancelIdBtn");
-      if (!zone || !input) return;
-
-      zone.addEventListener("click", () => input.click());
-      zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("is-drag"); });
-      zone.addEventListener("dragleave", () => zone.classList.remove("is-drag"));
-      zone.addEventListener("drop", (e) => { e.preventDefault(); zone.classList.remove("is-drag"); handleFile(e.dataTransfer.files[0]); });
-      input.addEventListener("change", () => { if (input.files[0]) handleFile(input.files[0]); });
-
-      function handleFile(file) {
-        if (!file || !file.type.startsWith("image/")) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          idImage = reader.result;
-          previewImg.src = idImage;
-          zone.style.display = "none";
-          preview.style.display = "";
-        };
-        reader.readAsDataURL(file);
-      }
-
-      if (cancelBtn) cancelBtn.addEventListener("click", () => {
-        idImage = null;
-        zone.style.display = "";
-        preview.style.display = "none";
-        input.value = "";
-      });
-
-      if (submitBtn) submitBtn.addEventListener("click", async () => {
-        if (!idImage) return toast("No image", "Please select an image first.", "⚠️");
-        submitBtn.disabled = true;
-        submitBtn.textContent = "Submitting...";
-        try {
-          const r = await API.verifyId(idImage);
-          if (r.user) State.me = r.user;
-          toast("Submitted", "Your student ID has been submitted for review.", "✓");
-          paintVerify();
-        } catch (err) {
-          submitBtn.disabled = false;
-          submitBtn.textContent = "Submit for review";
-          toast("Error", err.message, "⚠️");
-        }
-      });
-    }
+    const ef = $("#emailForm");
+    if (ef) ef.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = $("#verifyEmail").value.trim();
+      try { await API.verifySend(email); State.verifyPending = true; paintVerify(); toast("Code sent", "Check your email for the 6-digit code.", "📧"); }
+      catch (err) { toast("Error", err.message, "⚠️"); }
+    });
+    const cf = $("#codeForm");
+    if (cf) cf.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const code = $("#codeInput").value.trim();
+      if (!code) return;
+      try {
+        const r = await API.verifyCheck(code);
+        if (r.verified) { State.me = r.user; State.verifyPending = false; await renderProfile(); updateNavUser(); toast("Verified", "✓ Seller verified successfully", "✓"); }
+      } catch (err) { const m = $("#verifyMsg"); if (m) m.textContent = err.message; toast("Error", err.message, "⚠️"); }
+    });
+    const rb = $("#resendBtn");
+    if (rb) rb.addEventListener("click", async () => {
+      try { await API.verifySend(State.me.email || ""); toast("Code resent", "A new code was sent to your email.", "📧"); }
+      catch (err) { toast("Error", err.message, "⚠️"); }
+    });
   }
 
   async function renderProfile(id) {
@@ -1224,11 +1161,6 @@
             <div id="banList" class="admin-ban-list"></div>
           </div>
         </div>
-          <div class="admin-card" style="margin-top:24px">
-          <h3><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-4px;margin-right:4px"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Student ID Verifications</h3>
-          <p class="muted admin-hint">Review student ID uploads. Approve to verify the seller, or reject with a reason.</p>
-          <div id="adminVerifications" class="admin-verifications"></div>
-        </div>
         <div class="admin-card" style="margin-top:24px">
           <h3>⚠️ Flagged Listings (Reports)</h3>
           <div id="adminReports" class="admin-reports"></div>
@@ -1301,43 +1233,7 @@
       } catch (err) { box.innerHTML = `<p class="muted">${esc(err.message)}</p>`; }
     });
 
-    adminLoadReports(); adminLoadUsers(); adminLoadAnnouncements(); adminLoadVerifications();
-  }
-  async function adminLoadVerifications() {
-    const el = $("#adminVerifications"); if (!el) return;
-    el.innerHTML = `<p class="muted">Loading pending verifications…</p>`;
-    try {
-      const { verifications } = await API.adminVerifications();
-      if (!verifications.length) { el.innerHTML = `<p class="muted">No pending student ID verifications.</p>`; return; }
-      el.innerHTML = verifications.map((v) => `
-        <div class="admin-verification" data-uid="${esc(v.user.id)}">
-          <div class="admin-verification__info">
-            <b>${esc(v.user.name)}</b>
-            <span class="muted">${esc(v.user.email)}</span>
-            <span class="muted"><code>${esc(v.user.id)}</code></span>
-          </div>
-          <div class="admin-verification__image">
-            ${v.idCardImage ? `<img src="${esc(v.idCardImage)}" alt="Student ID" class="admin-verification__img" onclick="window.open(this.src,'_blank')">` : `<span class="muted">No image</span>`}
-          </div>
-          <div class="admin-verification__actions">
-            <button class="btn btn--primary btn--sm" data-approve="${esc(v.user.id)}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><path d="M20 6L9 17l-5-5"/></svg>Approve</button>
-            <button class="btn btn--danger btn--sm" data-reject="${esc(v.user.id)}" data-name="${esc(v.user.name)}"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>Reject</button>
-          </div>
-        </div>`).join("");
-      $$("#adminVerifications [data-approve]").forEach((b) => b.addEventListener("click", async () => {
-        if (!window.confirm(`Approve ${b.dataset.name || "this student"}'s ID? They will become a verified seller.`)) return;
-        b.disabled = true;
-        try { await API.adminApproveId(b.dataset.approve); toast("Approved", "Student ID verified.", "✓"); adminLoadVerifications(); }
-        catch (e) { b.disabled = false; toast("Error", e.message, "⚠️"); }
-      }));
-      $$("#adminVerifications [data-reject]").forEach((b) => b.addEventListener("click", async () => {
-        const reason = prompt(`Why reject ${b.dataset.name || "this student"}'s ID?`, "ID image was not clear or did not match UNIBEN student ID format.");
-        if (reason === null) return;
-        b.disabled = true;
-        try { await API.adminRejectId(b.dataset.reject, reason); toast("Rejected", "Student ID rejected.", "✗"); adminLoadVerifications(); }
-        catch (e) { b.disabled = false; toast("Error", e.message, "⚠️"); }
-      }));
-    } catch (e) { el.innerHTML = `<p class="muted">Failed to load verifications.</p>`; }
+    adminLoadReports(); adminLoadUsers(); adminLoadAnnouncements();
   }
   async function adminLoadReports() {
     const el = $("#adminReports"); if (!el) return;
