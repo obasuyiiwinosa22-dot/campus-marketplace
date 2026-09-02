@@ -448,7 +448,7 @@
       <button class="card__fav ${fav ? "is-active" : ""}" data-fav="${p.id}" aria-label="Save" title="Save">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="${fav ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8z"/></svg>
       </button>
-      ${isOwner ? `<button class="card__del" data-del-listing type="button" aria-label="Delete listing" title="Delete listing"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ""}
+      ${(isOwner || (State.me && State.me.isAdmin)) ? `<button class="card__del" data-del-listing type="button" aria-label="Delete listing" title="Delete listing"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ""}
       <a class="card__body" href="#/product/${p.id}" data-link>
         <span class="card__title">${esc(p.title)}</span>
         <span class="card__price">${money(p.price)}</span>
